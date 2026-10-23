@@ -1,0 +1,17 @@
+{
+  "name": "english-learning",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -p . && node esbuild.config.mjs production",
+    "check": "node scripts/check-rules.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "obsidian": "1.14.4",
+    "tslib": "^2.8.1",
+    "typescript": "5.6.3"
+  }
+}
