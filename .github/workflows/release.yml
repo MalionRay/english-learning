@@ -1,30 +1,45 @@
 name: Release Obsidian plugin
 
+# 推到 main 時：若 manifest.json 的版本還沒有 release，就編譯並發布。
 on:
   push:
-    tags: ["*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
-      - run: npm run build
-      - run: npm run check
-      - name: Check tag matches manifest version
-        run: |
-          v=$(node -p "require('./manifest.json').version")
-          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != manifest $v"; exit 1; }
-      - name: Create release
+      - name: Read version
+        id: v
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Skip if already released
+        id: exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" main.js manifest.json styles.css \
-            --title "${GITHUB_REF_NAME}" --notes "Built from ${GITHUB_SHA}"
+          if gh release view "${{ steps.v.outputs.version }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "Release ${{ steps.v.outputs.version }} exists, skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.exists.outputs.skip == 'false'
+        run: npm ci
+      - if: steps.exists.outputs.skip == 'false'
+        run: npm run build
+      - if: steps.exists.outputs.skip == 'false'
+        run: npm run check
+      - if: steps.exists.outputs.skip == 'false'
+        name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.version }}" main.js manifest.json styles.css \
+            --target "${GITHUB_SHA}" --title "${{ steps.v.outputs.version }}" --notes "Built from ${GITHUB_SHA}"
