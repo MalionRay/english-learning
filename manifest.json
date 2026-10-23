@@ -1,9 +1,9 @@
 {
   "id": "english-learning",
   "name": "English Learning",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.11.4",
-  "description": "English learning system. Stage 1: sync / API / microphone verification.",
+  "description": "English learning system: article import, AI question generation, sync verification.",
   "author": "Ray Gao",
   "isDesktopOnly": false
 }

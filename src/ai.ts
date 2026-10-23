@@ -4,6 +4,7 @@ import { requestUrl } from "obsidian";
 export interface AIUsage {
 	inputTokens?: number;
 	outputTokens?: number;
+	thoughtTokens?: number;
 	totalTokens?: number;
 }
 
@@ -11,12 +12,22 @@ export interface AIResult {
 	text: string;
 	usage: AIUsage;
 	model: string;
-	raw?: unknown;
+	finishReason?: string;
+}
+
+export interface AIOptions {
+	/** 固定的指示放這裡（放在前面，利於快取）。 */
+	system?: string;
+	/** 要求回傳 JSON。 */
+	json?: boolean;
+	maxOutputTokens?: number;
+	temperature?: number;
 }
 
 export interface AIBackend {
 	readonly id: string;
-	complete(prompt: string, opts?: { maxOutputTokens?: number }): Promise<AIResult>;
+	readonly model: string;
+	complete(prompt: string, opts?: AIOptions): Promise<AIResult>;
 }
 
 export class AIError extends Error {
@@ -29,19 +40,25 @@ export class AIError extends Error {
 export class GeminiBackend implements AIBackend {
 	readonly id = "gemini";
 
-	constructor(private apiKey: string, private model: string) {}
+	constructor(private apiKey: string, readonly model: string) {}
 
-	async complete(prompt: string, opts: { maxOutputTokens?: number } = {}): Promise<AIResult> {
+	async complete(prompt: string, opts: AIOptions = {}): Promise<AIResult> {
 		const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
+		const generationConfig: Record<string, unknown> = { maxOutputTokens: opts.maxOutputTokens ?? 256 };
+		if (opts.json) generationConfig.responseMimeType = "application/json";
+		if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
+		const body: Record<string, unknown> = {
+			contents: [{ role: "user", parts: [{ text: prompt }] }],
+			generationConfig,
+		};
+		if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
+
 		const res = await requestUrl({
 			url,
 			method: "POST",
 			contentType: "application/json",
 			headers: { "x-goog-api-key": this.apiKey },
-			body: JSON.stringify({
-				contents: [{ role: "user", parts: [{ text: prompt }] }],
-				generationConfig: { maxOutputTokens: opts.maxOutputTokens ?? 256 },
-			}),
+			body: JSON.stringify(body),
 			throw: false,
 		});
 
@@ -59,19 +76,21 @@ export class GeminiBackend implements AIBackend {
 		const j = res.json;
 		const cand = j?.candidates?.[0];
 		const text: string = (cand?.content?.parts ?? [])
+			.filter((p: { thought?: boolean }) => !p.thought)
 			.map((p: { text?: string }) => p.text ?? "")
 			.join("")
 			.trim();
 		const um = j?.usageMetadata ?? {};
 		return {
-			text: text || `（沒有文字回覆，finishReason=${cand?.finishReason ?? "?"}）`,
+			text,
+			finishReason: cand?.finishReason,
 			model: j?.modelVersion ?? this.model,
 			usage: {
 				inputTokens: um.promptTokenCount,
 				outputTokens: um.candidatesTokenCount,
+				thoughtTokens: um.thoughtsTokenCount,
 				totalTokens: um.totalTokenCount,
 			},
-			raw: j,
 		};
 	}
 }
