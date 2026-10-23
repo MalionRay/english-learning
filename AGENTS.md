@@ -15,7 +15,7 @@
 ## 開發順序
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
 2. 正式功能：
-   1. 文章匯入與 AI 出題 ← v0.2.0
+   1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.0（TTS 從第 4 項提前）
    2. 練習介面、SRS 依 log 重算、開始與結束同步流程
    3. 文字對話，錯誤回收進 SRS
    4. 鍵盤聽寫與 TTS 朗讀
@@ -28,6 +28,9 @@
 - 每題有 UUID（id），答題 log 以題目 UUID 對應，不依賴題目在檔案中的位置
 - 題型：vocab、cloze、reading（四選一，選項由程式洗牌）、translate（練習時由 AI 批改）
 - 解釋一律繁體中文（台灣用語）
+- 生字：文章中用 ==字== 標記（匯入時也可填，會自動標記）；出題時一定要考，vocab 題帶 marked: true
+- 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
+- 朗讀語音與語速存 localStorage（各裝置可用語音不同）
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js

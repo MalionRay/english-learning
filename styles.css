@@ -15,3 +15,7 @@
 .el-verify .el-foot { margin-top: 16px; }
 .el-textarea { width: 100%; min-height: 220px; font-family: var(--font-text); margin: 6px 0; }
 .el-modal-buttons { justify-content: flex-end; display: flex; gap: 8px; margin-top: 8px; }
+.el-say { cursor: pointer; border-bottom: 1px dotted var(--text-accent); }
+.el-say::after { content: " 🔊"; font-size: 0.8em; }
+.el-say.el-sentence { font-style: italic; }
+.markdown-reading-view mark, .markdown-preview-view mark { cursor: pointer; }

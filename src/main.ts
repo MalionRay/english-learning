@@ -16,6 +16,7 @@ import { AppendOnlyWriter, DEBUG_ROOT, LogEntry, Totals, computeTotals, logPath,
 import { ELSettingTab } from "./settings";
 import { bankPath, generateForSource, importArticle } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
+import { englishVoices, speak, ttsAvailable } from "./tts";
 
 const LS_LAST_LEVEL = "english-learning:last-level";
 
@@ -53,7 +54,24 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.addCommand({ id: "test-api", name: "測試 AI API", callback: () => this.testApi() });
 		this.addCommand({ id: "test-mic", name: "測試麥克風", callback: () => this.testMic() });
 		this.addCommand({ id: "sync", name: "立即同步（Remotely Save）", callback: () => this.triggerSync() });
+		this.addCommand({ id: "test-tts", name: "測試發音", callback: () => this.testTts() });
 		this.addSettingTab(new ELSettingTab(this.app, this));
+
+		// 點 .el-say（題庫中的英文）就朗讀；閱讀模式下點文章裡的 ==螢光筆== 生字也會朗讀
+		this.registerDomEvent(
+			document,
+			"click",
+			(e: MouseEvent) => {
+				const t = e.target as HTMLElement | null;
+				const say = t?.closest?.(".el-say");
+				const mark = !say ? t?.closest?.(".markdown-reading-view mark, .markdown-preview-view mark") : null;
+				const el = say ?? mark;
+				if (!el) return;
+				if (mark && !this.app.workspace.getActiveFile()?.path.startsWith("english/")) return;
+				this.say(el.textContent ?? "");
+			},
+			true,
+		);
 
 		this.app.workspace.onLayoutReady(() =>
 			this.debug(`plugin loaded v${this.manifest.version}; device=${this.deviceId}; platform=${platformName()}`),
@@ -153,11 +171,11 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	// ---------- 文章匯入與出題 ----------
-	async importArticle(title: string, level: Level, text: string): Promise<TFile | null> {
+	async importArticle(title: string, level: Level, text: string, unknownWords: string[] = []): Promise<TFile | null> {
 		try {
 			this.app.saveLocalStorage(LS_LAST_LEVEL, level);
-			const f = await importArticle(this.app, { title, level, text, deviceId: this.deviceId });
-			new Notice(`已匯入：${f.basename}`);
+			const { file: f, notFound } = await importArticle(this.app, { title, level, text, deviceId: this.deviceId, unknownWords });
+			new Notice(`已匯入：${f.basename}${notFound.length ? `\n文章裡找不到這些字，沒有標記：${notFound.join("、")}` : ""}`, notFound.length ? 10000 : 4000);
 			this.debug(`import ${f.path}`);
 			this.refreshViews();
 			return f;
@@ -182,7 +200,8 @@ export default class EnglishLearningPlugin extends Plugin {
 		try {
 			const r = await generateForSource(this.app, file, ai, this.deviceId, levelIfMissing);
 			await this.writeEntry(this.entry("api", { ok: true, purpose: "generate", source: file.path, backend: ai.id, model: r.model, ms: r.ms, usage: r.usage, count: r.count })).catch(() => undefined);
-			const msg = `出題完成：${r.count} 題${r.dropped ? `（丟掉 ${r.dropped} 題格式不對的）` : ""}，${(r.ms / 1000).toFixed(1)} 秒，tokens ${r.usage.inputTokens ?? "?"}/${r.usage.outputTokens ?? "?"}`;
+			const cover = r.marked ? `；標記的生字 ${r.marked - r.missing.length}/${r.marked} 個有出題${r.missing.length ? `（漏了：${r.missing.join("、")}）` : ""}` : "";
+			const msg = `出題完成：${r.count} 題${r.dropped ? `（丟掉 ${r.dropped} 題不合格的）` : ""}${cover}，${(r.ms / 1000).toFixed(1)} 秒，tokens ${r.usage.inputTokens ?? "?"}/${r.usage.outputTokens ?? "?"}`;
 			new Notice(msg, 8000);
 			this.debug(`generate ${file.path}: ${msg}`);
 			if (this.settings.syncAfterGenerate) await this.triggerSync(true);
@@ -202,6 +221,28 @@ export default class EnglishLearningPlugin extends Plugin {
 		const f = this.app.vault.getAbstractFileByPath(bankPath(sourceId));
 		if (f instanceof TFile) await this.app.workspace.getLeaf(false).openFile(f);
 		else new Notice("找不到題庫檔，可能還沒同步下來");
+	}
+
+	// ---------- 朗讀 ----------
+	say(text: string) {
+		speak(this.app, text).catch((e) => this.fail("朗讀", e));
+	}
+
+	async testTts(): Promise<string> {
+		let result: string;
+		try {
+			if (!ttsAvailable()) throw new Error("speechSynthesis 不存在");
+			const voices = await englishVoices();
+			const v = await speak(this.app, "Hello! This is a pronunciation test. Espionage. Remilitarisation. Lodge a protest.");
+			result = `tts OK：使用 ${v?.name ?? "預設"}（${v?.lang ?? "?"}）；可用英文語音 ${voices.length} 個`;
+			await this.writeEntry(this.entry("tts", { result: "OK", voice: v?.name, voices: voices.map((x) => `${x.name} (${x.lang})${x.localService ? "" : " [online]"}`) })).catch(() => undefined);
+		} catch (e) {
+			result = `tts FAIL: ${errMsg(e)}`;
+			await this.writeEntry(this.entry("tts", { result: "FAIL", error: errMsg(e) })).catch(() => undefined);
+		}
+		new Notice(result, 6000);
+		this.debug(result);
+		return result;
 	}
 
 	// ---------- 麥克風 ----------

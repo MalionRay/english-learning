@@ -5,8 +5,12 @@ import {
 	Level,
 	MAX_WORDS,
 	cleanText,
+	extractMarked,
+	markWords,
+	missingMarked,
+	planWithMarked,
+	stripMarks,
 	parseQuestions,
-	planFor,
 	planTotal,
 	renderBank,
 	systemPrompt,
@@ -68,7 +72,10 @@ export function stripFrontmatter(md: string): string {
 }
 
 /** 匯入：在 english/sources 建立新筆記。 */
-export async function importArticle(app: App, opts: { title: string; level: Level; text: string; deviceId: string }): Promise<TFile> {
+export async function importArticle(
+	app: App,
+	opts: { title: string; level: Level; text: string; deviceId: string; unknownWords?: string[] },
+): Promise<{ file: TFile; notFound: string[] }> {
 	await ensureFolder(app, SOURCES_DIR);
 	const base = safeFileName(opts.title);
 	let path = normalizePath(`${SOURCES_DIR}/${base}.md`);
@@ -84,7 +91,9 @@ export async function importArticle(app: App, opts: { title: string; level: Leve
 		"---",
 		"",
 	].join("\n");
-	return app.vault.create(path, fm + cleanText(opts.text).trim() + "\n");
+	const { text, notFound } = markWords(cleanText(opts.text).trim(), opts.unknownWords ?? []);
+	const file = await app.vault.create(path, fm + text + "\n");
+	return { file, notFound };
 }
 
 export function readSource(app: App, file: TFile): SourceInfo {
@@ -133,6 +142,8 @@ export interface GenerateResult {
 	count: number;
 	planned: number;
 	dropped: number;
+	marked: number;
+	missing: string[];
 	model: string;
 	usage: AIUsage;
 	ms: number;
@@ -155,7 +166,9 @@ export async function generateForSource(
 	const check = canGenerate(info, deviceId);
 	if (!check.ok) throw new Error(check.reason);
 
-	const article = cleanText(stripFrontmatter(await app.vault.read(file))).trim();
+	const raw = cleanText(stripFrontmatter(await app.vault.read(file))).trim();
+	const marked = extractMarked(raw);
+	const article = stripMarks(raw);
 	const words = wordCount(article);
 	if (words < 30) throw new Error(`文章太短（${words} 個英文字），至少需要 30 個字`);
 	if (words > MAX_WORDS) throw new Error(`文章太長（${words} 個英文字），請分段匯入，每段最多 ${MAX_WORDS} 字`);
@@ -178,8 +191,8 @@ export async function generateForSource(
 
 	const started = Date.now();
 	try {
-		const plan = planFor(words);
-		const res = await ai.complete(userPrompt(article, plan), {
+		const plan = planWithMarked(words, marked.length);
+		const res = await ai.complete(userPrompt(article, plan, marked), {
 			system: systemPrompt(level),
 			json: true,
 			maxOutputTokens: 8192,
@@ -189,6 +202,10 @@ export async function generateForSource(
 		if (res.finishReason === "MAX_TOKENS") throw new Error("AI 回覆被截斷（超過長度上限），請把文章分段再試");
 		const parsed = parseQuestions(res.text);
 		const planned = planTotal(plan);
+		const markedSet = new Set(marked.map((m) => m.toLowerCase()));
+		for (const q of parsed.questions)
+			if (q.type === "vocab" && ((q.word && markedSet.has(q.word.toLowerCase())) || markedSet.has(q.prompt.toLowerCase()))) q.marked = true;
+		const missing = missingMarked(parsed.questions, marked);
 		if (parsed.questions.length < Math.ceil(planned / 2))
 			throw new Error(`可用的題目太少（${parsed.questions.length}/${planned}），請再試一次`);
 
@@ -219,6 +236,8 @@ export async function generateForSource(
 			count: parsed.questions.length,
 			planned,
 			dropped: parsed.dropped.length,
+			marked: marked.length,
+			missing,
 			model: res.model,
 			usage: res.usage,
 			ms: Date.now() - started,
