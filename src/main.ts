@@ -14,7 +14,7 @@ import {
 import { Level } from "./generate";
 import { AppendOnlyWriter, DEBUG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, uuid } from "./logs";
 import { ELSettingTab } from "./settings";
-import { bankPath, generateForSource, importArticle } from "./sources";
+import { bankPath, generateForSource, importArticle, resetSource, waitForStatus } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 
@@ -214,6 +214,18 @@ export default class EnglishLearningPlugin extends Plugin {
 			this.generating.delete(file.path);
 			this.refreshViews();
 		}
+	}
+
+	async regenerate(file: TFile) {
+		try {
+			await resetSource(this.app, file, this.deviceId);
+			await waitForStatus(this.app, file, "new");
+			this.debug(`reset ${file.path}`);
+		} catch (e) {
+			this.fail("重新出題", e);
+			return;
+		}
+		await this.generate(file);
 	}
 
 	async openBank(sourceId?: string) {

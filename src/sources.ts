@@ -126,6 +126,36 @@ export function bankPath(sourceId: string): string {
 	return normalizePath(`${BANK_DIR}/${sourceId}.md`);
 }
 
+/**
+ * 重新出題前的重置：把舊題庫移到垃圾桶（依使用者的刪除設定），來源筆記改回 status: new。
+ * 只能在匯入的裝置執行（單一寫入者）。舊題目的答題紀錄仍留在 log 裡，只是不再對應到題目。
+ */
+export async function resetSource(app: App, file: TFile, deviceId: string): Promise<void> {
+	const s = readSource(app, file);
+	if (s.importedOn && s.importedOn !== deviceId) throw new Error(`只能在匯入的裝置（${s.importedOn}）重新出題`);
+	if (s.id) {
+		const old = app.vault.getAbstractFileByPath(bankPath(s.id));
+		if (old instanceof TFile) await app.fileManager.trashFile(old);
+	}
+	await app.fileManager.processFrontMatter(file, (fm) => {
+		fm.status = "new";
+		delete fm.count;
+		delete fm.bank;
+		delete fm.generatedAt;
+		delete fm.generatingSince;
+		delete fm.lastError;
+	});
+}
+
+/** 等 metadataCache 反映 frontmatter 的變更（processFrontMatter 之後快取是非同步更新的）。 */
+export async function waitForStatus(app: App, file: TFile, status: SourceStatus, timeoutMs = 3000): Promise<void> {
+	const start = Date.now();
+	while (readSource(app, file).status !== status) {
+		if (Date.now() - start > timeoutMs) return;
+		await new Promise((r) => setTimeout(r, 100));
+	}
+}
+
 /** 這篇文章現在能不能在這台裝置出題；不能的話回傳原因。 */
 export function canGenerate(s: SourceInfo, deviceId: string): { ok: boolean; reason?: string } {
 	if (s.status === "generated") return { ok: false, reason: "已經出過題" };

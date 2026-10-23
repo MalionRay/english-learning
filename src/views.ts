@@ -63,6 +63,16 @@ export class HomeView extends ItemView {
 				status.createSpan({ cls: "el-ok", text: `✓ 已出題 ${s.count ?? ""} 題` });
 				const b = status.createEl("button", { text: "開啟題庫" });
 				b.onclick = () => p.openBank(s.id);
+				if (!s.importedOn || s.importedOn === p.deviceId) {
+					const re = status.createEl("button", { text: "重新出題" });
+					re.onclick = () =>
+						new ConfirmModal(
+							this.app,
+							"重新出題",
+							"舊題庫會移到垃圾桶，然後用目前的文章（包含 ==螢光筆== 標記的生字）重新出題。已經做過的舊題目練習紀錄會保留，但不會再出現。",
+							() => p.regenerate(s.file),
+						).open();
+				}
 			} else if (busy || s.status === "generating") {
 				status.createSpan({ text: "出題中…（約 10～30 秒）" });
 			} else {
@@ -139,6 +149,25 @@ export class ImportModal extends Modal {
 		row.createEl("button", { text: "匯入並出題", cls: "mod-cta" }).onclick = () => go(true);
 	}
 
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+export class ConfirmModal extends Modal {
+	constructor(app: App, private heading: string, private message: string, private onOk: () => void) {
+		super(app);
+	}
+	onOpen() {
+		this.setTitle(this.heading);
+		this.contentEl.createEl("p", { text: this.message });
+		const row = this.contentEl.createDiv({ cls: "el-row el-modal-buttons" });
+		row.createEl("button", { text: "取消" }).onclick = () => this.close();
+		row.createEl("button", { text: "確定", cls: "mod-warning" }).onclick = () => {
+			this.close();
+			this.onOk();
+		};
+	}
 	onClose() {
 		this.contentEl.empty();
 	}
