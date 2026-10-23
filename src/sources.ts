@@ -4,6 +4,7 @@ import {
 	Bank,
 	Level,
 	MAX_WORDS,
+	cleanText,
 	parseQuestions,
 	planFor,
 	planTotal,
@@ -83,7 +84,7 @@ export async function importArticle(app: App, opts: { title: string; level: Leve
 		"---",
 		"",
 	].join("\n");
-	return app.vault.create(path, fm + opts.text.trim() + "\n");
+	return app.vault.create(path, fm + cleanText(opts.text).trim() + "\n");
 }
 
 export function readSource(app: App, file: TFile): SourceInfo {
@@ -154,7 +155,7 @@ export async function generateForSource(
 	const check = canGenerate(info, deviceId);
 	if (!check.ok) throw new Error(check.reason);
 
-	const article = stripFrontmatter(await app.vault.read(file)).trim();
+	const article = cleanText(stripFrontmatter(await app.vault.read(file))).trim();
 	const words = wordCount(article);
 	if (words < 30) throw new Error(`文章太短（${words} 個英文字），至少需要 30 個字`);
 	if (words > MAX_WORDS) throw new Error(`文章太長（${words} 個英文字），請分段匯入，每段最多 ${MAX_WORDS} 字`);
