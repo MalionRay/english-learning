@@ -98,9 +98,11 @@ Question object shapes:
 
 Rules:
 - Every multiple-choice question has exactly 4 distinct options and exactly one correct answer.
-- Do not ask about the same word or sentence twice.
+- Every article sentence may be used by AT MOST ONE question across ALL types. A vocab "context" sentence must not reappear as a cloze sentence, and a cloze must not blank out a word that is also a vocab question. Otherwise one question gives away another's answer.
+- Translation prompts must be NEW sentences that reuse the article's vocabulary or grammar; do not simply translate a sentence from the article back.
+- Vocabulary items must be worth learning at the learner's level; skip words the learner surely already knows.
 - Base everything on the article; do not invent facts about it.
-- Explanations are concise (1–3 sentences).`;
+- Explanations are concise (1–3 sentences), written entirely in Traditional Chinese except for the English words being explained. Refer to the article as「文章」, never as "article".`;
 }
 
 export function userPrompt(article: string, plan: Plan): string {
@@ -127,6 +129,23 @@ function shuffleChoice(q: ChoiceQ, rand: () => number): ChoiceQ {
 	return { ...q, options: idx.map((i) => q.options[i]), answer: idx.indexOf(q.answer) };
 }
 
+/** 把句子轉成單字集合，用來判斷兩題是不是用了同一句。 */
+function sentenceWords(s: string): Set<string> {
+	return new Set((s.toLowerCase().match(/[a-z][a-z'’-]*/g) ?? []).filter((w) => w.length > 2));
+}
+
+function overlap(a: Set<string>, b: Set<string>): number {
+	if (!a.size || !b.size) return 0;
+	let n = 0;
+	for (const w of a) if (b.has(w)) n++;
+	return n / Math.min(a.size, b.size);
+}
+
+/** 去掉從網頁複製時夾帶的零寬字元。 */
+export function cleanText(s: string): string {
+	return s.replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "");
+}
+
 export interface ParseResult {
 	questions: Question[];
 	dropped: { reason: string; raw: unknown }[];
@@ -147,7 +166,13 @@ export function parseQuestions(text: string, rand: () => number = Math.random): 
 	const out: Question[] = [];
 	const dropped: ParseResult["dropped"] = [];
 	const seen = new Set<string>();
+	const usedSentences: Set<string>[] = []; // 單字題的原句與克漏字句子
+	const usedWords = new Set<string>(); // 已經考過的單字／克漏字答案
 	const drop = (reason: string, raw: unknown) => dropped.push({ reason, raw });
+	const sameSentence = (s: string) => {
+		const w = sentenceWords(s);
+		return w.size >= 4 && usedSentences.some((u) => overlap(w, u) >= 0.7);
+	};
 
 	for (const raw of arr) {
 		const r = (raw ?? {}) as Record<string, unknown>;
@@ -199,6 +224,27 @@ export function parseQuestions(text: string, rand: () => number = Math.random): 
 				continue;
 			}
 			prompt = prompt.replace(/_{2,}/g, "____");
+			if (sameSentence(prompt)) {
+				drop("和其他題用同一句", raw);
+				continue;
+			}
+			const ans = options[answer]?.toLowerCase();
+			if (ans && usedWords.has(ans)) {
+				drop("答案已在單字題考過", raw);
+				continue;
+			}
+		}
+		if (type === "vocab") {
+			const ctx = str(r.context);
+			const w = str(r.word).toLowerCase();
+			if (ctx && sameSentence(ctx)) {
+				drop("和其他題用同一句", raw);
+				continue;
+			}
+			if (w && usedWords.has(w)) {
+				drop("單字重複", raw);
+				continue;
+			}
 		}
 		const q: ChoiceQ = { id: uuid(), type, prompt, options, answer, explanation };
 		if (type === "vocab") {
@@ -210,6 +256,13 @@ export function parseQuestions(text: string, rand: () => number = Math.random): 
 		}
 		out.push(shuffleChoice(q, rand));
 		seen.add(key);
+		if (type === "vocab") {
+			if (q.context) usedSentences.push(sentenceWords(q.context));
+			if (q.word) usedWords.add(q.word.toLowerCase());
+		} else if (type === "cloze") {
+			usedSentences.push(sentenceWords(prompt));
+			usedWords.add(options[answer].toLowerCase());
+		}
 	}
 	return { questions: out, dropped };
 }
