@@ -21,5 +21,7 @@
 - `npm run check` 掃描是否違反上面的硬性限制；每次改完都要跑
 - 部署：把 main.js、manifest.json、styles.css 複製到
   `<vault>/.obsidian/plugins/english-learning/`（該資料夾有 .hotreload，Hot Reload 會自動重新載入）
+- 發布（給 iPad/iPhone 的 BRAT）：同時改 manifest.json 與 versions.json 的版本號，推到 main；
+  GitHub Action 會編譯、跑 check，並在該版本沒有 release 時自動發布 main.js、manifest.json、styles.css
 - 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools）
 - 觸發 Remotely Save 用 app.commands.executeCommandById('remotely-save:start-sync')，是非正式內部 API，失效時退回手動同步
