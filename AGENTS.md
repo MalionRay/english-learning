@@ -13,8 +13,21 @@
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
 
 ## 開發順序
-1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）← 目前在這一步
-2. 通過三裝置同步測試後才開始正式功能
+1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
+2. 正式功能：
+   1. 文章匯入與 AI 出題 ← v0.2.0
+   2. 練習介面、SRS 依 log 重算、開始與結束同步流程
+   3. 文字對話，錯誤回收進 SRS
+   4. 鍵盤聽寫與 TTS 朗讀
+   5. 依麥克風測試結果決定語音範圍
+   6. 數學模組
+
+## 題庫格式
+- english/sources/<標題>.md：frontmatter 有 id、title、level(adult|kid)、status(new|generating|generated)、importedOn
+- english/bank/<id>.md：新建不覆寫；上半部給人看，最後 `<!-- english-learning:bank -->` 後的 JSON 區塊給程式讀
+- 每題有 UUID（id），答題 log 以題目 UUID 對應，不依賴題目在檔案中的位置
+- 題型：vocab、cloze、reading（四選一，選項由程式洗牌）、translate（練習時由 AI 批改）
+- 解釋一律繁體中文（台灣用語）
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js

@@ -1,0 +1,290 @@
+import { App, ItemView, Modal, Notice, Setting, WorkspaceLeaf } from "obsidian";
+import type EnglishLearningPlugin from "./main";
+import { HOME_VIEW, VERIFY_VIEW } from "./constants";
+import { DEBUG_ROOT, logPath } from "./logs";
+import { LEVEL_LABEL, Level, MAX_WORDS, planFor, planTotal, wordCount } from "./generate";
+import { canGenerate, listSources } from "./sources";
+
+// =====================================================================
+// 主畫面：文章列表、匯入、出題
+export class HomeView extends ItemView {
+	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
+		super(leaf);
+	}
+	getViewType() {
+		return HOME_VIEW;
+	}
+	getDisplayText() {
+		return "English Learning";
+	}
+	getIcon() {
+		return "book-open";
+	}
+
+	async onOpen() {
+		const relevant = (path: string) => path.startsWith("english/");
+		this.registerEvent(this.app.metadataCache.on("changed", (f) => relevant(f.path) && this.render()));
+		this.registerEvent(this.app.vault.on("create", (f) => relevant(f.path) && this.render()));
+		this.registerEvent(this.app.vault.on("delete", (f) => relevant(f.path) && this.render()));
+		this.registerEvent(this.app.vault.on("rename", (f, old) => (relevant(f.path) || relevant(old)) && this.render()));
+		this.render();
+	}
+
+	render() {
+		const p = this.plugin;
+		const el = this.contentEl;
+		el.empty();
+		el.addClass("el-verify");
+		el.createEl("h3", { text: "English Learning" });
+		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}　使用者 ${p.user}` });
+
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const imp = r.createEl("button", { text: "匯入文章", cls: "mod-cta" });
+			imp.onclick = () => new ImportModal(this.app, p).open();
+			const s = r.createEl("button", { text: "立即同步" });
+			s.onclick = () => p.triggerSync();
+		});
+
+		el.createEl("h4", { text: "文章" });
+		const sources = listSources(this.app);
+		if (!sources.length) {
+			el.createDiv({ cls: "el-muted", text: "還沒有文章。按「匯入文章」貼上一篇英文文章，或在 english/sources 資料夾新增筆記。" });
+		}
+		for (const s of sources) {
+			const card = el.createDiv({ cls: "el-card" });
+			const head = card.createDiv({ cls: "el-row" });
+			const a = head.createEl("a", { text: s.title, cls: "el-title" });
+			a.onclick = () => this.app.workspace.getLeaf(false).openFile(s.file);
+			if (s.level) head.createSpan({ cls: "el-badge", text: LEVEL_LABEL[s.level] });
+
+			const busy = p.generating.has(s.file.path);
+			const status = card.createDiv({ cls: "el-row" });
+			if (s.status === "generated") {
+				status.createSpan({ cls: "el-ok", text: `✓ 已出題 ${s.count ?? ""} 題` });
+				const b = status.createEl("button", { text: "開啟題庫" });
+				b.onclick = () => p.openBank(s.id);
+			} else if (busy || s.status === "generating") {
+				status.createSpan({ text: "出題中…（約 10～30 秒）" });
+			} else {
+				const chk = canGenerate(s, p.deviceId);
+				if (chk.ok) {
+					const b = status.createEl("button", { text: "出題" });
+					b.onclick = () => {
+						if (s.level) p.generate(s.file);
+						else new LevelModal(this.app, (lv) => p.generate(s.file, lv)).open();
+					};
+					status.createSpan({ cls: "el-muted", text: "未出題" });
+				} else {
+					status.createSpan({ cls: "el-muted", text: chk.reason ?? "" });
+				}
+			}
+			if (s.lastError && s.status !== "generated") card.createDiv({ cls: "el-warn", text: `上次失敗：${s.lastError}` });
+		}
+
+		el.createDiv({ cls: "el-muted el-foot", text: "練習介面會在下一版加入；目前可以先開啟題庫檢查題目品質。" });
+	}
+}
+
+// =====================================================================
+export class ImportModal extends Modal {
+	private title = "";
+	private level: Level;
+	private text = "";
+
+	constructor(app: App, private plugin: EnglishLearningPlugin) {
+		super(app);
+		this.level = plugin.lastLevel;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		this.setTitle("匯入文章");
+		new Setting(contentEl).setName("標題").addText((t) => {
+			t.setPlaceholder("例如：BBC - Why we sleep").onChange((v) => (this.title = v));
+			t.inputEl.style.width = "100%";
+		});
+		new Setting(contentEl).setName("程度").addDropdown((d) =>
+			d
+				.addOptions({ adult: "成人", kid: "小孩" })
+				.setValue(this.level)
+				.onChange((v) => (this.level = v as Level)),
+		);
+		const info = contentEl.createDiv({ cls: "el-muted" });
+		const ta = contentEl.createEl("textarea", { cls: "el-textarea", attr: { placeholder: "把英文文章貼在這裡", rows: "12" } });
+		const update = () => {
+			this.text = ta.value;
+			const w = wordCount(ta.value);
+			info.setText(w ? `${w} 個英文字 → 預計 ${planTotal(planFor(w))} 題${w > MAX_WORDS ? `（超過 ${MAX_WORDS} 字，請分段）` : ""}` : "");
+		};
+		ta.addEventListener("input", update);
+
+		const row = contentEl.createDiv({ cls: "el-row el-modal-buttons" });
+		const go = async (andGenerate: boolean) => {
+			if (!this.text.trim()) return new Notice("請先貼上文章");
+			if (!this.title.trim()) this.title = this.text.trim().split(/\s+/).slice(0, 6).join(" ");
+			this.close();
+			const file = await this.plugin.importArticle(this.title, this.level, this.text);
+			if (file && andGenerate) await this.plugin.generate(file);
+		};
+		row.createEl("button", { text: "只匯入" }).onclick = () => go(false);
+		row.createEl("button", { text: "匯入並出題", cls: "mod-cta" }).onclick = () => go(true);
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+export class LevelModal extends Modal {
+	constructor(app: App, private onPick: (lv: Level) => void) {
+		super(app);
+	}
+	onOpen() {
+		this.setTitle("這篇文章的程度");
+		const row = this.contentEl.createDiv({ cls: "el-row el-modal-buttons" });
+		(["adult", "kid"] as Level[]).forEach((lv) => {
+			row.createEl("button", { text: LEVEL_LABEL[lv], cls: "mod-cta" }).onclick = () => {
+				this.close();
+				this.onPick(lv);
+			};
+		});
+	}
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+// =====================================================================
+// 驗證面板（同步層測試用）
+export class VerifyView extends ItemView {
+	private busy = false;
+
+	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
+		super(leaf);
+	}
+	getViewType() {
+		return VERIFY_VIEW;
+	}
+	getDisplayText() {
+		return "English Learning 驗證";
+	}
+	getIcon() {
+		return "flask-conical";
+	}
+
+	async onOpen() {
+		this.registerEvent(this.app.vault.on("create", (f) => f.path.startsWith("logs/") && this.render()));
+		this.registerEvent(this.app.vault.on("modify", (f) => f.path.startsWith("logs/") && this.render()));
+		this.registerEvent(this.app.vault.on("delete", (f) => f.path.startsWith("logs/") && this.render()));
+		await this.render();
+	}
+
+	async render() {
+		if (this.busy) return;
+		this.busy = true;
+		try {
+			await this.draw();
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	private async draw() {
+		const p = this.plugin;
+		const el = this.contentEl;
+		const totals = await p.totals();
+		el.empty();
+		el.addClass("el-verify");
+
+		el.createEl("h3", { text: "驗證外掛" });
+
+		// 1. 裝置與使用者
+		el.createEl("h4", { text: "1. 本機裝置" });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			r.createSpan({ text: "裝置 ID：" });
+			r.createSpan({ cls: "el-mono", text: p.deviceId });
+		});
+		el.createDiv({ cls: "el-row" }, (r) => {
+			r.createSpan({ text: "使用者：" });
+			const sel = r.createEl("select", { cls: "dropdown" });
+			for (const u of p.settings.users) sel.createEl("option", { text: u, value: u });
+			sel.value = p.user;
+			sel.onchange = () => {
+				p.user = sel.value;
+				this.render();
+			};
+		});
+		el.createDiv({ cls: "el-muted", text: `本機寫入：${logPath(p.user, p.deviceId)}` });
+
+		// 2. append
+		el.createEl("h4", { text: "2. 記一筆" });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "記一筆", cls: "mod-cta" });
+			b.onclick = () => p.tap();
+			const s = r.createEl("button", { text: "立即同步" });
+			s.onclick = () => p.triggerSync();
+			const re = r.createEl("button", { text: "重新計算" });
+			re.onclick = () => this.render();
+		});
+
+		// 3. 合計
+		el.createEl("h4", { text: "3. 合計（所有裝置）" });
+		el.createDiv({ cls: "el-big", text: String(totals.uniqueTaps) });
+		el.createDiv({
+			cls: "el-muted",
+			text: `原始筆數 ${totals.rawTaps}，UUID 重複 ${totals.duplicates}，壞行 ${totals.badLines}，計算於 ${new Date().toLocaleTimeString()}`,
+		});
+		const devices = Object.keys({ ...totals.byDevice, ...totals.latest }).sort();
+		if (devices.length) {
+			const tbl = el.createEl("table");
+			const h = tbl.createEl("tr");
+			for (const c of ["裝置", "筆數", "API", "麥克風", "上次同步觸發"]) h.createEl("th", { text: c });
+			for (const d of devices) {
+				const tr = tbl.createEl("tr");
+				const l = totals.latest[d] ?? {};
+				tr.createEl("td", { cls: "el-mono", text: d + (d === p.deviceId ? "（本機）" : "") });
+				tr.createEl("td", { text: String(totals.byDevice[d] ?? 0) });
+				tr.createEl("td", { text: l.api ? (l.api.ok ? "OK" : "FAIL") : "—" });
+				tr.createEl("td", { text: l.mic ? String(l.mic.result).replace("mic ", "") : "—" });
+				tr.createEl("td", { text: l.sync ? new Date(l.sync.ts).toLocaleString() : "—" });
+			}
+		}
+		const users = Object.entries(totals.byUser);
+		if (users.length) el.createDiv({ cls: "el-muted", text: "依使用者：" + users.map(([u, n]) => `${u} ${n}`).join("、") });
+		if (totals.suspicious.length) {
+			el.createDiv({ cls: "el-warn", text: `⚠ 不符合 logs/<user>/<deviceId>.jsonl 的檔案（可能是衝突副本）：` });
+			for (const s of totals.suspicious) el.createDiv({ cls: "el-mono el-warn", text: s });
+		} else if (totals.files.length) {
+			el.createDiv({ cls: "el-ok", text: `✓ ${totals.files.length} 個 log 檔，沒有衝突副本` });
+		}
+
+		// 4. API
+		el.createEl("h4", { text: "4. AI API（Gemini）" });
+		const hasSecret = !!(this.app as App & { secretStorage?: unknown }).secretStorage;
+		el.createDiv({
+			cls: "el-muted",
+			text: `模型 ${p.settings.geminiModel}；金鑰${p.getApiKey() ? "已設定" : "未設定"}（${hasSecret ? "SecretStorage" : "localStorage 備案"}）`,
+		});
+		const apiOut = el.createEl("pre", { text: "（尚未測試）" });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "測試 API" });
+			b.onclick = async () => {
+				apiOut.setText("呼叫中…");
+				apiOut.setText(await p.testApi());
+			};
+		});
+
+		// 5. Mic
+		el.createEl("h4", { text: "5. 麥克風" });
+		const micOut = el.createEl("pre", { text: "（尚未測試）" });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "測試麥克風" });
+			b.onclick = async () => {
+				micOut.setText("測試中…");
+				micOut.setText(await p.testMic());
+			};
+		});
+
+		el.createDiv({ cls: "el-muted", text: `除錯紀錄：${DEBUG_ROOT}/${p.deviceId}.md` });
+	}
+}

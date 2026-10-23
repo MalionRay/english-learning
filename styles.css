@@ -9,3 +9,9 @@
 .el-verify table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
 .el-verify td, .el-verify th { border-bottom: 1px solid var(--background-modifier-border); padding: 3px 6px; text-align: left; }
 .el-verify pre { white-space: pre-wrap; word-break: break-word; font-size: 0.85em; background: var(--background-secondary); padding: 6px; border-radius: 4px; }
+.el-verify .el-card { border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+.el-verify .el-title { font-weight: 600; cursor: pointer; }
+.el-verify .el-badge { font-size: 0.8em; padding: 1px 8px; border-radius: 10px; background: var(--background-modifier-hover); }
+.el-verify .el-foot { margin-top: 16px; }
+.el-textarea { width: 100%; min-height: 220px; font-family: var(--font-text); margin: 6px 0; }
+.el-modal-buttons { justify-content: flex-end; display: flex; gap: 8px; margin-top: 8px; }
