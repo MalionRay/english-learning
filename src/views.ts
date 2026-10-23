@@ -90,6 +90,7 @@ export class ImportModal extends Modal {
 	private title = "";
 	private level: Level;
 	private text = "";
+	private unknown = "";
 
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
 		super(app);
@@ -109,6 +110,13 @@ export class ImportModal extends Modal {
 				.setValue(this.level)
 				.onChange((v) => (this.level = v as Level)),
 		);
+		new Setting(contentEl)
+			.setName("我不會的字")
+			.setDesc("用逗號分隔，可留空。會在文章中標成 ==螢光筆==，出題時一定會考；之後也可以直接在文章裡用 ==字== 標記。")
+			.addText((t) => {
+				t.setPlaceholder("espionage, lodge a protest").onChange((v) => (this.unknown = v));
+				t.inputEl.style.width = "100%";
+			});
 		const info = contentEl.createDiv({ cls: "el-muted" });
 		const ta = contentEl.createEl("textarea", { cls: "el-textarea", attr: { placeholder: "把英文文章貼在這裡", rows: "12" } });
 		const update = () => {
@@ -123,7 +131,8 @@ export class ImportModal extends Modal {
 			if (!this.text.trim()) return new Notice("請先貼上文章");
 			if (!this.title.trim()) this.title = this.text.trim().split(/\s+/).slice(0, 6).join(" ");
 			this.close();
-			const file = await this.plugin.importArticle(this.title, this.level, this.text);
+			const words = this.unknown.split(/[,，、;；\n]/).map((w) => w.trim()).filter(Boolean);
+			const file = await this.plugin.importArticle(this.title, this.level, this.text, words);
 			if (file && andGenerate) await this.plugin.generate(file);
 		};
 		row.createEl("button", { text: "只匯入" }).onclick = () => go(false);
@@ -271,6 +280,17 @@ export class VerifyView extends ItemView {
 			b.onclick = async () => {
 				apiOut.setText("呼叫中…");
 				apiOut.setText(await p.testApi());
+			};
+		});
+
+		// 發音
+		el.createEl("h4", { text: "發音（系統語音）" });
+		const ttsOut = el.createEl("pre", { text: "（尚未測試）" });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "測試發音" });
+			b.onclick = async () => {
+				ttsOut.setText("朗讀中…");
+				ttsOut.setText(await p.testTts());
 			};
 		});
 

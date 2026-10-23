@@ -25,6 +25,8 @@ export interface ChoiceQ extends BaseQ {
 	answer: number; // 正確選項的 index
 	context?: string; // 單字題：文章中的原句
 	word?: string; // 單字題：英文單字（之後進單字庫）
+	ipa?: string; // 單字題：IPA 音標（美式）
+	marked?: boolean; // 使用者標記的生字
 	direction?: "en2zh" | "zh2en";
 }
 export interface TranslateQ extends BaseQ {
@@ -63,13 +65,78 @@ export function planFor(words: number): Plan {
 	return { vocab, cloze, reading, translate };
 }
 
+/** 使用者標記的生字較多時，增加單字題的數量（總數最多 30 題）。 */
+export function planWithMarked(words: number, marked: number): Plan {
+	const p = planFor(words);
+	const slots = p.vocab + p.cloze;
+	if (marked > slots) p.vocab += Math.min(marked - slots, 30 - planTotal(p));
+	return p;
+}
+
+/** 文章中用 ==螢光筆== 標記的生字（去重、保留原順序）。 */
+export function extractMarked(text: string): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const re = /==([^=\n]{1,60})==/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(text))) {
+		const w = m[1].trim();
+		if (w && !seen.has(w.toLowerCase())) {
+			seen.add(w.toLowerCase());
+			out.push(w);
+		}
+	}
+	return out;
+}
+
+/** 送給 AI 前拿掉螢光筆記號。 */
+export function stripMarks(text: string): string {
+	return text.replace(/==([^=\n]{1,60})==/g, "$1");
+}
+
+function escapeRe(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 把指定的生字在文章中第一次出現的地方標成 ==螢光筆==。回傳找不到的字。 */
+export function markWords(text: string, words: string[]): { text: string; notFound: string[] } {
+	const notFound: string[] = [];
+	let t = text;
+	for (const w of words.map((x) => x.trim()).filter(Boolean)) {
+		// 不用 lookbehind（舊版 iOS 不支援），改用前一個字元的群組
+		// 每個字允許常見字尾變化：lodge a protest 也能對到 lodged a protest
+		const pattern = w
+			.split(/\s+/)
+			.map((x) => `${escapeRe(x)}(?:s|es|d|ed|ing)?`)
+			.join("\\s+");
+		const re = new RegExp(`(^|[^A-Za-z=])(${pattern})(?![A-Za-z=])`, "i");
+		if (re.test(t)) t = t.replace(re, "$1==$2==");
+		else if (!new RegExp(pattern, "i").test(t)) notFound.push(w); // 已經被標記過的不算找不到
+	}
+	return { text: t, notFound };
+}
+
+/** 有哪些標記的生字沒有出現在任何單字題或克漏字答案中。 */
+export function missingMarked(qs: Question[], marked: string[]): string[] {
+	const covered = new Set<string>();
+	for (const q of qs) {
+		if (q.type === "vocab") {
+			if (q.word) covered.add(q.word.toLowerCase());
+			covered.add(q.prompt.toLowerCase());
+			covered.add(q.options[q.answer].toLowerCase());
+		} else if (q.type === "cloze") covered.add(q.options[q.answer].toLowerCase());
+	}
+	const hit = (m: string) => [...covered].some((c) => c === m || c.includes(m) || m.includes(c));
+	return marked.filter((m) => !hit(m.toLowerCase()));
+}
+
 export function planTotal(p: Plan): number {
 	return p.vocab + p.cloze + p.reading + p.translate;
 }
 
 const LEVEL_GUIDE: Record<Level, string> = {
 	adult:
-		"Learner: a Taiwanese adult at roughly CEFR B1–B2 aiming for C1. Prefer useful, high-value vocabulary, collocations, phrasal verbs and idioms from the article over trivial words. Reading questions may test inference and the author's intent.",
+		"Learner: a Taiwanese adult at roughly CEFR B1–B2 aiming for C1. Prefer vocabulary that is useful at this level: collocations, phrasal verbs, idioms, and common words used in a less common sense are all good choices. Reading questions may test inference and the author's intent.",
 	kid:
 		"Learner: a Taiwanese primary-school child at roughly CEFR A1–A2. Choose common, concrete words. Keep every English sentence you write short and simple. Reading questions should test literal understanding of the text. Translation prompts must be short everyday sentences.",
 };
@@ -86,7 +153,7 @@ Return ONLY a JSON object of this shape:
 
 Question object shapes:
 1. Vocabulary (type "vocab"): a word or phrase that appears in the article.
-   {"type":"vocab","direction":"en2zh","word":"<English word/phrase>","context":"<the exact sentence from the article containing it>","prompt":"<the English word/phrase>","options":["<4 Traditional Chinese meanings>"],"answer":<0-3>,"explanation":"<繁中：在此句中的意思、詞性、常見搭配或另一個例句>"}
+   {"type":"vocab","direction":"en2zh","word":"<English word/phrase>","ipa":"<American IPA between slashes, e.g. /ˈɛspiəˌnɑʒ/>","context":"<the exact sentence from the article containing it>","prompt":"<the English word/phrase>","options":["<4 Traditional Chinese meanings>"],"answer":<0-3>,"explanation":"<繁中：在此句中的意思、詞性、常見搭配或另一個例句>"}
    or with "direction":"zh2en": "prompt" is a Traditional Chinese meaning and "options" are 4 English words/phrases.
    Wrong options must be plausible but clearly wrong in this context.
 2. Cloze (type "cloze"): take a sentence from the article and replace ONE word or short phrase with "____".
@@ -100,13 +167,19 @@ Rules:
 - Every multiple-choice question has exactly 4 distinct options and exactly one correct answer.
 - Every article sentence may be used by AT MOST ONE question across ALL types. A vocab "context" sentence must not reappear as a cloze sentence, and a cloze must not blank out a word that is also a vocab question. Otherwise one question gives away another's answer.
 - Translation prompts must be NEW sentences that reuse the article's vocabulary or grammar; do not simply translate a sentence from the article back.
-- Vocabulary items must be worth learning at the learner's level; skip words the learner surely already knows.
+- Vocabulary should be useful at the learner's level. Do not skip a word just because it looks common; its meaning or usage in this article may still be new.
 - Base everything on the article; do not invent facts about it.
 - Explanations are concise (1–3 sentences), written entirely in Traditional Chinese except for the English words being explained. Refer to the article as「文章」, never as "article".`;
 }
 
-export function userPrompt(article: string, plan: Plan): string {
-	return `Write exactly ${plan.vocab} vocab, ${plan.cloze} cloze, ${plan.reading} reading and ${plan.translate} translate questions (${planTotal(plan)} total) for this article.
+export function userPrompt(article: string, plan: Plan, marked: string[] = []): string {
+	const must = marked.length
+		? `The learner marked these words/phrases as unknown: ${marked.map((m) => JSON.stringify(m)).join(", ")}.
+EVERY marked item MUST be tested in a vocab question (use cloze only if vocab slots run out). Fill the remaining slots with other useful items.
+
+`
+		: "";
+	return `${must}Write exactly ${plan.vocab} vocab, ${plan.cloze} cloze, ${plan.reading} reading and ${plan.translate} translate questions (${planTotal(plan)} total) for this article.
 
 <article>
 ${article.trim()}
@@ -252,6 +325,11 @@ export function parseQuestions(text: string, rand: () => number = Math.random): 
 			const context = str(r.context);
 			if (word) q.word = word;
 			if (context) q.context = context;
+			let ipa = str(r.ipa);
+			if (ipa) {
+				ipa = ipa.replace(/^[/[]|[/\]]$/g, "");
+				q.ipa = `/${ipa}/`;
+			}
 			q.direction = str(r.direction) === "zh2en" ? "zh2en" : "en2zh";
 		}
 		out.push(shuffleChoice(q, rand));
@@ -280,6 +358,15 @@ function quoteLines(s: string): string {
 		.join("\n");
 }
 
+function escapeHtml(s: string): string {
+	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** 可點擊朗讀的英文（點一下就唸）。 */
+function say(text: string, sentence = false): string {
+	return `<span class="el-say${sentence ? " el-sentence" : ""}">${escapeHtml(text)}</span>`;
+}
+
 export function renderBank(bank: Bank, sourceLinkTarget: string): string {
 	const fm = [
 		"---",
@@ -305,14 +392,23 @@ export function renderBank(bank: Bank, sourceLinkTarget: string): string {
 			n++;
 			if (q.type === "translate") {
 				parts.push(`**${n}.** 翻成英文：${q.prompt}`, "");
-				parts.push("> [!success]- 參考答案", quoteLines(`${q.reference}\n\n${q.explanation}`), "");
+				parts.push("> [!success]- 參考答案", quoteLines(`${say(q.reference)}\n\n${q.explanation}`), "");
 			} else {
-				parts.push(`**${n}.** ${q.prompt}`);
-				if (q.context) parts.push(`*${q.context}*`);
+				const star = q.marked ? "　⭐生字" : "";
+				const zh2en = q.type === "vocab" && q.direction === "zh2en";
+				let reveal = "";
+				if (q.type === "vocab" && !zh2en) {
+					parts.push(`**${n}.** ${say(q.prompt)}${q.ipa ? `　${q.ipa}` : ""}${star}`);
+					if (q.context) parts.push(say(q.context, true));
+				} else {
+					parts.push(`**${n}.** ${q.prompt}${star}`);
+					if (zh2en) reveal = `${q.word ? say(q.word) : ""}${q.ipa ? `　${q.ipa}` : ""}${q.context ? `\n\n${say(q.context, true)}` : ""}\n\n`;
+				}
 				parts.push("");
 				q.options.forEach((o, i) => parts.push(`- ${LETTERS[i]}. ${o}`));
 				parts.push("");
-				parts.push("> [!success]- 答案", quoteLines(`${LETTERS[q.answer]}. ${q.options[q.answer]}\n\n${q.explanation}`), "");
+				const ans = q.type === "cloze" ? say(q.prompt.replace("____", q.options[q.answer]), true) : `${LETTERS[q.answer]}. ${q.options[q.answer]}`;
+				parts.push("> [!success]- 答案", quoteLines(`${q.type === "cloze" ? `${LETTERS[q.answer]}. ${q.options[q.answer]}\n\n` : ""}${reveal}${ans}\n\n${q.explanation}`), "");
 			}
 		}
 	}
