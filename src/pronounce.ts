@@ -111,6 +111,74 @@ function mimeFor(path: string): string {
 
 // ---------------------------------------------------------------------
 
+/**
+ * 把 24 kHz、16-bit、單聲道的 WAV 轉成 16 kHz，檔案小三分之一，語音清晰度幾乎不變。
+ * 不是這個格式就原樣回傳。
+ */
+export function downsampleWav(buf: ArrayBuffer, target = 16000): ArrayBuffer {
+	const v = new DataView(buf);
+	if (buf.byteLength < 44 || v.getUint32(0, false) !== 0x52494646 || v.getUint32(8, false) !== 0x57415645) return buf;
+	// 找 fmt 與 data chunk
+	let off = 12,
+		rate = 0,
+		ch = 0,
+		bits = 0,
+		fmt = 0,
+		dataOff = -1,
+		dataLen = 0;
+	while (off + 8 <= buf.byteLength) {
+		const id = v.getUint32(off, false);
+		const len = v.getUint32(off + 4, true);
+		if (id === 0x666d7420) {
+			fmt = v.getUint16(off + 8, true);
+			ch = v.getUint16(off + 10, true);
+			rate = v.getUint32(off + 12, true);
+			bits = v.getUint16(off + 22, true);
+		} else if (id === 0x64617461) {
+			dataOff = off + 8;
+			dataLen = Math.min(len, buf.byteLength - dataOff);
+			break;
+		}
+		off += 8 + len + (len % 2);
+	}
+	if (fmt !== 1 || ch !== 1 || bits !== 16 || dataOff < 0 || rate <= target) return buf;
+	const n = Math.floor(dataLen / 2);
+	const src = new Int16Array(n);
+	for (let i = 0; i < n; i++) src[i] = v.getInt16(dataOff + i * 2, true);
+	const ratio = rate / target;
+	const outN = Math.floor(n / ratio);
+	const out = new ArrayBuffer(44 + outN * 2);
+	const o = new DataView(out);
+	const w = (p: number, s: string) => {
+		for (let i = 0; i < 4; i++) o.setUint8(p + i, s.charCodeAt(i));
+	};
+	w(0, "RIFF");
+	o.setUint32(4, 36 + outN * 2, true);
+	w(8, "WAVE");
+	w(12, "fmt ");
+	o.setUint32(16, 16, true);
+	o.setUint16(20, 1, true);
+	o.setUint16(22, 1, true);
+	o.setUint32(24, target, true);
+	o.setUint32(28, target * 2, true);
+	o.setUint16(32, 2, true);
+	o.setUint16(34, 16, true);
+	w(36, "data");
+	o.setUint32(40, outN * 2, true);
+	for (let i = 0; i < outN; i++) {
+		// 對來源區間取平均（簡單的低通），再做線性內插
+		const pos = i * ratio;
+		const a = Math.floor(pos);
+		const b = Math.min(a + 1, n - 1);
+		const frac = pos - a;
+		let s = src[a] * (1 - frac) + src[b] * frac;
+		const c = Math.min(a + 2, n - 1);
+		s = (s * 2 + src[c] * 0.5 + src[Math.max(a - 1, 0)] * 0.5) / 3;
+		o.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(s))), true);
+	}
+	return out;
+}
+
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
 	const bin = atob(b64);
 	const out = new Uint8Array(bin.length);
@@ -149,6 +217,7 @@ export class Pronouncer {
 	private index = new Map<string, string[]>(); // key → 檔案路徑
 	private inflight = new Map<string, Promise<PronounceSource>>();
 	private warnedExhausted = false;
+	private dictDownUntil = 0; // 字典服務暫時掛掉時，一小時內不再嘗試
 
 	constructor(private d: PronounceDeps) {}
 
@@ -214,7 +283,7 @@ export class Pronouncer {
 			}
 		}
 		// 2. 字典真人錄音（單字）
-		if (!opts.forceGemini && s.dictAudio && isSingleWord(text) && !this.dictMissed(text)) {
+		if (!opts.forceGemini && s.dictAudio && isSingleWord(text) && !this.dictMissed(text) && Date.now() > this.dictDownUntil) {
 			try {
 				const got = await this.fetchDict(text);
 				if (got) {
@@ -225,7 +294,8 @@ export class Pronouncer {
 				}
 				this.markDictMiss(text);
 			} catch (e) {
-				this.d.debug(`dict failed ${text}: ${(e as Error)?.message ?? e}`);
+				this.dictDownUntil = Date.now() + 3600_000;
+				this.d.debug(`dict failed ${text}: ${(e as Error)?.message ?? e}（一小時內不再嘗試字典）`);
 			}
 		}
 		// 3. Gemini 語音
@@ -304,8 +374,7 @@ export class Pronouncer {
 	private async fetchGemini(text: string, s: PronounceSettings): Promise<ArrayBuffer> {
 		const key = this.d.apiKey();
 		if (!key) throw new Error("沒有 API key");
-		const call = (withRate: boolean) =>
-			requestUrl({
+		const res = await requestUrl({
 				url: "https://generativelanguage.googleapis.com/v1beta/interactions",
 				method: "POST",
 				contentType: "application/json",
@@ -313,14 +382,11 @@ export class Pronouncer {
 				body: JSON.stringify({
 					model: s.ttsModel,
 					input: [{ type: "user_input", content: [{ type: "text", text }] }],
-					// 16 kHz 夠清楚，檔案只有預設 24 kHz 的三分之二
-					response_format: withRate ? { type: "audio", mime_type: "audio/wav", sample_rate: 16000 } : { type: "audio" },
-					generation_config: { speech_config: [{ voice: s.ttsVoice }] },
-				}),
-				throw: false,
-			});
-		let res = await call(true);
-		if (res.status === 400) res = await call(false); // 不支援 sample_rate 時改用預設
+				response_format: { type: "audio" },
+				generation_config: { speech_config: [{ voice: s.ttsVoice }] },
+			}),
+			throw: false,
+		});
 		if (res.status < 200 || res.status >= 300) {
 			let msg = `TTS HTTP ${res.status}`;
 			try {
@@ -332,7 +398,8 @@ export class Pronouncer {
 		}
 		const data = findAudioData(res.json);
 		if (!data) throw new Error("回應裡沒有音訊");
-		return base64ToArrayBuffer(data);
+		// 回傳 24 kHz WAV；存檔前降到 16 kHz 節省空間
+		return downsampleWav(base64ToArrayBuffer(data));
 	}
 
 	// ---- 存檔 ----
