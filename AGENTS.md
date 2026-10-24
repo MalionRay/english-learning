@@ -15,7 +15,7 @@
 ## 開發順序
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
 2. 正式功能：
-   1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.0（TTS 從第 4 項提前）
+   1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
    2. 練習介面、SRS 依 log 重算、開始與結束同步流程
    3. 文字對話，錯誤回收進 SRS
    4. 鍵盤聽寫與 TTS 朗讀
@@ -30,7 +30,11 @@
 - 解釋一律繁體中文（台灣用語）
 - 生字：文章中用 ==字== 標記（匯入時也可填，會自動標記）；出題時一定要考，vocab 題帶 marked: true
 - 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
-- 朗讀語音與語速存 localStorage（各裝置可用語音不同）
+- 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Gemini TTS → 系統語音
+- 錄音存 english/audio/<deviceId>/<hash>.mp3|wav（單一寫入者；檔名是正規化文字的 cyrb53 雜湊），任何裝置都可讀
+- Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；收到 429 當天停用；設定有每日上限
+- 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
+- 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js

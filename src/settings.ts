@@ -4,6 +4,7 @@ import type EnglishLearningPlugin from "./main";
 import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, LS_TTS_VOICE, defaultVoice, englishVoices, getRate } from "./tts";
+import { loadQuota } from "./pronounce";
 
 export class ELSettingTab extends PluginSettingTab {
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
@@ -51,7 +52,59 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		const voiceSetting = new Setting(containerEl).setName("朗讀語音").setDesc("每台裝置各自設定。iPad 可在「設定 → 輔助使用 → 朗讀內容 → 聲音」下載更自然的英文語音。");
+		containerEl.createEl("h3", { text: "發音" });
+		containerEl.createEl("p", {
+			cls: "setting-item-description",
+			text: "點 🔊 時依序嘗試：已存的錄音 → 字典真人錄音（單字）→ Gemini 語音 → 系統語音。取得的錄音存在 english/audio，會同步到其他裝置，之後離線也能播。",
+		});
+		new Setting(containerEl)
+			.setName("單字用字典真人發音")
+			.setDesc("Free Dictionary API，免費、不需金鑰；部分單字沒有錄音。")
+			.addToggle((t) =>
+				t.setValue(p.settings.dictAudio).onChange(async (v) => {
+					p.settings.dictAudio = v;
+					await p.saveSettings();
+				}),
+			);
+		const q = loadQuota(this.app);
+		new Setting(containerEl)
+			.setName("使用 Gemini 自然語音")
+			.setDesc(`用同一把 Gemini 金鑰，有免費額度。額度用完當天自動改用系統語音。這台裝置今天已產生 ${q.count} 段${q.exhausted ? "（今天額度已用完）" : ""}。`)
+			.addToggle((t) =>
+				t.setValue(p.settings.geminiTts).onChange(async (v) => {
+					p.settings.geminiTts = v;
+					await p.saveSettings();
+				}),
+			);
+		new Setting(containerEl)
+			.setName("每天最多產生幾段 Gemini 語音")
+			.setDesc("每台裝置分開計算，依 Google 的重置時間（台灣下午 3～4 點）歸零。")
+			.addText((t) =>
+				t.setValue(String(p.settings.ttsDailyCap)).onChange(async (v) => {
+					const n = Math.max(0, Math.min(10000, Math.floor(Number(v))));
+					if (Number.isFinite(n)) {
+						p.settings.ttsDailyCap = n;
+						await p.saveSettings();
+					}
+				}),
+			);
+		new Setting(containerEl)
+			.setName("Gemini 語音模型與聲音")
+			.setDesc("聲音例如 Kore、Puck、Zephyr、Charon、Leda、Aoede。")
+			.addText((t) =>
+				t.setValue(p.settings.ttsModel).onChange(async (v) => {
+					p.settings.ttsModel = v.trim() || "gemini-3.8-flash-lite-tts";
+					await p.saveSettings();
+				}),
+			)
+			.addText((t) =>
+				t.setValue(p.settings.ttsVoice).onChange(async (v) => {
+					p.settings.ttsVoice = v.trim() || "Kore";
+					await p.saveSettings();
+				}),
+			);
+
+		const voiceSetting = new Setting(containerEl).setName("系統語音（最後的備案）").setDesc("每台裝置各自設定。iPad 可在「設定 → 輔助使用 → 朗讀內容 → 聲音」下載更自然的英文語音。");
 		englishVoices().then((voices) => {
 			voiceSetting.addDropdown((d) => {
 				const def = defaultVoice(voices);

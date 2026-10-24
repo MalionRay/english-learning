@@ -16,6 +16,12 @@ export interface Settings {
 	geminiModel: string;
 	apiKeySecretName: string; // SecretStorage 裡的 secret 名稱，不是金鑰本身
 	syncAfterGenerate: boolean;
+	// 發音
+	dictAudio: boolean; // 單字先用字典真人錄音
+	geminiTts: boolean; // 再用 Gemini 語音
+	ttsModel: string;
+	ttsVoice: string;
+	ttsDailyCap: number; // 每台裝置每天最多產生幾段 Gemini 語音
 }
 
 export const DEFAULTS: Settings = {
@@ -24,4 +30,9 @@ export const DEFAULTS: Settings = {
 	geminiModel: "gemini-3.5-flash-lite",
 	apiKeySecretName: "",
 	syncAfterGenerate: true,
+	dictAudio: true,
+	geminiTts: true,
+	ttsModel: "gemini-3.8-flash-lite-tts",
+	ttsVoice: "Kore",
+	ttsDailyCap: 100,
 };

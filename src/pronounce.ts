@@ -1,0 +1,356 @@
+// 發音：依序嘗試
+//   1. Vault 裡已存好的錄音（任何裝置存的都可以用，離線也能播）
+//   2. 單字：Free Dictionary API 的真人錄音（免費、不需金鑰）
+//   3. Gemini 語音模型（有免費額度；額度用完當天就不再呼叫）
+//   4. 系統語音（speechSynthesis）
+// 新取得的錄音存到 english/audio/<deviceId>/<hash>.<ext>：每台裝置只寫自己的資料夾（單一寫入者）。
+import { App, TAbstractFile, TFile, normalizePath, requestUrl } from "obsidian";
+import { AIError } from "./ai";
+
+export const AUDIO_DIR = "english/audio";
+const LS_DICT_MISS = "english-learning:dict-miss";
+const LS_TTS_QUOTA = "english-learning:tts-quota";
+
+export interface PronounceSettings {
+	dictAudio: boolean;
+	geminiTts: boolean;
+	ttsModel: string;
+	ttsVoice: string;
+	ttsDailyCap: number;
+}
+
+export type PronounceSource = "cache" | "dict" | "gemini" | "system";
+
+// ---------------------------------------------------------------------
+// 雜湊與正規化
+
+/** cyrb53：簡單、穩定的 53-bit 雜湊，不需要 crypto.subtle。 */
+function cyrb53(str: string, seed = 0): string {
+	let h1 = 0xdeadbeef ^ seed,
+		h2 = 0x41c6ce57 ^ seed;
+	for (let i = 0; i < str.length; i++) {
+		const ch = str.charCodeAt(i);
+		h1 = Math.imul(h1 ^ ch, 2654435761);
+		h2 = Math.imul(h2 ^ ch, 1597334677);
+	}
+	h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+	h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+	return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
+}
+
+export function normalizeSpeech(text: string): string {
+	return text.replace(/[​-‍⁠﻿]/g, "").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+}
+
+export function audioKey(text: string): string {
+	return cyrb53(normalizeSpeech(text).toLowerCase());
+}
+
+export function isSingleWord(text: string): boolean {
+	return /^[A-Za-z][A-Za-z'-]*$/.test(normalizeSpeech(text));
+}
+
+// ---------------------------------------------------------------------
+// 每日額度（以 Google 的重置時間：美國太平洋時間午夜為準）
+
+export function quotaDay(d = new Date()): string {
+	try {
+		return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+	} catch {
+		return new Date(d.getTime() - 8 * 3600_000).toISOString().slice(0, 10);
+	}
+}
+
+interface QuotaState {
+	day: string;
+	count: number;
+	exhausted: boolean;
+}
+
+export function loadQuota(app: App): QuotaState {
+	const today = quotaDay();
+	const q = app.loadLocalStorage(LS_TTS_QUOTA) as QuotaState | null;
+	if (!q || q.day !== today) return { day: today, count: 0, exhausted: false };
+	return q;
+}
+
+function saveQuota(app: App, q: QuotaState) {
+	app.saveLocalStorage(LS_TTS_QUOTA, q);
+}
+
+// ---------------------------------------------------------------------
+// 播放（iOS 需要在使用者點擊的同一個事件裡先「解鎖」播放）
+
+const SILENT_WAV =
+	"data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
+let player: HTMLAudioElement | null = null;
+let currentUrl: string | null = null;
+
+/** 一定要在 click handler 裡同步呼叫。 */
+export function unlockAudio() {
+	try {
+		if (!player) player = new Audio();
+		player.src = SILENT_WAV;
+		player.play().catch(() => undefined);
+	} catch {
+		/* 沒有 Audio 也沒關係，最後會退回系統語音 */
+	}
+}
+
+async function playBuffer(data: ArrayBuffer, mime: string): Promise<void> {
+	if (!player) player = new Audio();
+	if (currentUrl) URL.revokeObjectURL(currentUrl);
+	currentUrl = URL.createObjectURL(new Blob([data], { type: mime }));
+	player.src = currentUrl;
+	await player.play();
+}
+
+function mimeFor(path: string): string {
+	return path.endsWith(".mp3") ? "audio/mpeg" : path.endsWith(".ogg") ? "audio/ogg" : "audio/wav";
+}
+
+// ---------------------------------------------------------------------
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+	const bin = atob(b64);
+	const out = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+	return out.buffer;
+}
+
+/** 在 Gemini Interactions API 的回應裡找 base64 音訊。 */
+export function findAudioData(j: unknown): string | null {
+	const steps = (j as { steps?: { type?: string; content?: { type?: string; data?: string }[] }[] })?.steps;
+	if (Array.isArray(steps)) {
+		for (let i = steps.length - 1; i >= 0; i--) {
+			const c = steps[i]?.content;
+			if (!Array.isArray(c)) continue;
+			for (let k = c.length - 1; k >= 0; k--) if (c[k]?.type === "audio" && typeof c[k].data === "string") return c[k].data as string;
+		}
+	}
+	// 退路：舊的 generateContent 格式
+	const parts = (j as { candidates?: { content?: { parts?: { inlineData?: { data?: string } }[] } }[] })?.candidates?.[0]?.content?.parts;
+	if (Array.isArray(parts)) for (const p of parts) if (p?.inlineData?.data) return p.inlineData.data;
+	return null;
+}
+
+export interface PronounceDeps {
+	app: App;
+	deviceId: string;
+	settings: () => PronounceSettings;
+	apiKey: () => string | null;
+	systemSpeak: (text: string) => Promise<unknown>;
+	log: (source: PronounceSource, extra: Record<string, unknown>) => void;
+	notice: (msg: string) => void;
+	debug: (msg: string) => void;
+}
+
+export class Pronouncer {
+	private index = new Map<string, string[]>(); // key → 檔案路徑
+	private inflight = new Map<string, Promise<PronounceSource>>();
+	private warnedExhausted = false;
+
+	constructor(private d: PronounceDeps) {}
+
+	// ---- 索引 ----
+	rebuildIndex() {
+		this.index.clear();
+		for (const f of this.d.app.vault.getFiles()) this.add(f);
+	}
+
+	onCreate(f: TAbstractFile) {
+		if (f instanceof TFile) this.add(f);
+	}
+
+	onDelete(f: TAbstractFile | string) {
+		const path = typeof f === "string" ? f : f.path;
+		for (const [k, list] of this.index) {
+			const next = list.filter((p) => p !== path);
+			if (next.length !== list.length) next.length ? this.index.set(k, next) : this.index.delete(k);
+		}
+	}
+
+	private add(f: TFile) {
+		if (!f.path.startsWith(AUDIO_DIR + "/")) return;
+		const key = f.basename;
+		if (!/^[0-9a-f]{14}$/.test(key)) return;
+		const list = this.index.get(key) ?? [];
+		if (!list.includes(f.path)) list.push(f.path);
+		// 真人錄音（mp3）優先
+		list.sort((a, b) => Number(b.endsWith(".mp3")) - Number(a.endsWith(".mp3")));
+		this.index.set(key, list);
+	}
+
+	cachedCount(): number {
+		return this.index.size;
+	}
+
+	// ---- 主流程 ----
+	/** 呼叫前請先在 click handler 裡同步呼叫 unlockAudio()。 */
+	async pronounce(text: string, opts: { forceGemini?: boolean } = {}): Promise<PronounceSource> {
+		const t = normalizeSpeech(text);
+		if (!t) return "system";
+		const key = audioKey(t);
+		const running = this.inflight.get(key);
+		if (running && !opts.forceGemini) return running;
+		const job = this.run(t, key, opts).finally(() => this.inflight.delete(key));
+		this.inflight.set(key, job);
+		return job;
+	}
+
+	private async run(text: string, key: string, opts: { forceGemini?: boolean }): Promise<PronounceSource> {
+		const s = this.d.settings();
+		// 1. 已存的錄音
+		if (!opts.forceGemini) {
+			for (const path of this.index.get(key) ?? []) {
+				const f = this.d.app.vault.getAbstractFileByPath(path);
+				if (!(f instanceof TFile)) continue;
+				try {
+					await playBuffer(await this.d.app.vault.readBinary(f), mimeFor(path));
+					return "cache";
+				} catch (e) {
+					this.d.debug(`play cache failed ${path}: ${(e as Error)?.name ?? e}`);
+				}
+			}
+		}
+		// 2. 字典真人錄音（單字）
+		if (!opts.forceGemini && s.dictAudio && isSingleWord(text) && !this.dictMissed(text)) {
+			try {
+				const got = await this.fetchDict(text);
+				if (got) {
+					await this.save(key, "mp3", got);
+					this.d.log("dict", { text });
+					await playBuffer(got, "audio/mpeg");
+					return "dict";
+				}
+				this.markDictMiss(text);
+			} catch (e) {
+				this.d.debug(`dict failed ${text}: ${(e as Error)?.message ?? e}`);
+			}
+		}
+		// 3. Gemini 語音
+		if (s.geminiTts && this.quotaOk(s)) {
+			try {
+				const wav = await this.fetchGemini(text, s);
+				const q = loadQuota(this.d.app);
+				q.count++;
+				saveQuota(this.d.app, q);
+				await this.save(key, "wav", wav);
+				this.d.log("gemini", { text: text.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count });
+				await playBuffer(wav, "audio/wav");
+				return "gemini";
+			} catch (e) {
+				if (e instanceof AIError && e.status === 429) {
+					const q = loadQuota(this.d.app);
+					q.exhausted = true;
+					saveQuota(this.d.app, q);
+					this.d.notice("今天的 Gemini 語音免費額度已用完，改用系統語音（台灣時間下午 3～4 點重置）");
+					this.d.log("gemini", { ok: false, status: 429 });
+				} else {
+					this.d.debug(`gemini tts failed: ${(e as Error)?.message ?? e}${e instanceof AIError && e.body ? ` body=${e.body}` : ""}`);
+				}
+			}
+		}
+		// 4. 系統語音
+		await this.d.systemSpeak(text);
+		return "system";
+	}
+
+	private quotaOk(s: PronounceSettings): boolean {
+		const q = loadQuota(this.d.app);
+		if (q.exhausted) return false;
+		if (q.count >= s.ttsDailyCap) {
+			if (!this.warnedExhausted) {
+				this.warnedExhausted = true;
+				this.d.notice(`今天已產生 ${q.count} 段 Gemini 語音，達到設定的上限，改用系統語音`);
+			}
+			return false;
+		}
+		return true;
+	}
+
+	// ---- 字典 ----
+	private dictMissed(word: string): boolean {
+		const list = this.d.app.loadLocalStorage(LS_DICT_MISS);
+		return Array.isArray(list) && list.includes(word.toLowerCase());
+	}
+
+	private markDictMiss(word: string) {
+		const list = this.d.app.loadLocalStorage(LS_DICT_MISS);
+		const arr: string[] = Array.isArray(list) ? list : [];
+		arr.push(word.toLowerCase());
+		this.d.app.saveLocalStorage(LS_DICT_MISS, arr.slice(-2000));
+	}
+
+	private async fetchDict(word: string): Promise<ArrayBuffer | null> {
+		const res = await requestUrl({
+			url: `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word.toLowerCase())}`,
+			throw: false,
+		});
+		if (res.status === 404) return null;
+		if (res.status !== 200) throw new Error(`dictionary HTTP ${res.status}`);
+		const urls: string[] = [];
+		for (const entry of Array.isArray(res.json) ? res.json : [])
+			for (const ph of entry?.phonetics ?? []) if (typeof ph?.audio === "string" && ph.audio) urls.push(ph.audio);
+		if (!urls.length) return null;
+		const pick = urls.find((u) => /-us\.mp3$/i.test(u)) ?? urls.find((u) => /\.mp3$/i.test(u)) ?? urls[0];
+		const url = pick.startsWith("//") ? `https:${pick}` : pick;
+		const audio = await requestUrl({ url, throw: false });
+		if (audio.status !== 200 || !audio.arrayBuffer.byteLength) return null;
+		return audio.arrayBuffer;
+	}
+
+	// ---- Gemini ----
+	private async fetchGemini(text: string, s: PronounceSettings): Promise<ArrayBuffer> {
+		const key = this.d.apiKey();
+		if (!key) throw new Error("沒有 API key");
+		const call = (withRate: boolean) =>
+			requestUrl({
+				url: "https://generativelanguage.googleapis.com/v1beta/interactions",
+				method: "POST",
+				contentType: "application/json",
+				headers: { "x-goog-api-key": key },
+				body: JSON.stringify({
+					model: s.ttsModel,
+					input: [{ type: "user_input", content: [{ type: "text", text }] }],
+					// 16 kHz 夠清楚，檔案只有預設 24 kHz 的三分之二
+					response_format: withRate ? { type: "audio", mime_type: "audio/wav", sample_rate: 16000 } : { type: "audio" },
+					generation_config: { speech_config: [{ voice: s.ttsVoice }] },
+				}),
+				throw: false,
+			});
+		let res = await call(true);
+		if (res.status === 400) res = await call(false); // 不支援 sample_rate 時改用預設
+		if (res.status < 200 || res.status >= 300) {
+			let msg = `TTS HTTP ${res.status}`;
+			try {
+				if (res.json?.error?.message) msg += `: ${res.json.error.message}`;
+			} catch {
+				/* ignore */
+			}
+			throw new AIError(msg, res.status, res.text?.slice(0, 1000));
+		}
+		const data = findAudioData(res.json);
+		if (!data) throw new Error("回應裡沒有音訊");
+		return base64ToArrayBuffer(data);
+	}
+
+	// ---- 存檔 ----
+	private async save(key: string, ext: string, data: ArrayBuffer) {
+		const folder = normalizePath(`${AUDIO_DIR}/${this.d.deviceId}`);
+		const path = normalizePath(`${folder}/${key}.${ext}`);
+		try {
+			let cur = "";
+			for (const p of folder.split("/")) {
+				cur = cur ? `${cur}/${p}` : p;
+				if (!(await this.d.app.vault.adapter.exists(cur))) await this.d.app.vault.createFolder(cur).catch(() => undefined);
+			}
+			if (!(await this.d.app.vault.adapter.exists(path))) {
+				const f = await this.d.app.vault.createBinary(path, data);
+				this.add(f);
+			}
+		} catch (e) {
+			this.d.debug(`save audio failed ${path}: ${(e as Error)?.message ?? e}`);
+		}
+	}
+}

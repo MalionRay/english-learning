@@ -17,6 +17,7 @@ import { ELSettingTab } from "./settings";
 import { bankPath, generateForSource, importArticle, resetSource, waitForStatus } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
+import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
 
 const LS_LAST_LEVEL = "english-learning:last-level";
 
@@ -26,11 +27,34 @@ export default class EnglishLearningPlugin extends Plugin {
 	writer!: AppendOnlyWriter;
 	/** 這台裝置正在出題的文章路徑 */
 	generating = new Set<string>();
+	pronouncer!: Pronouncer;
 
 	async onload() {
 		await this.loadSettings();
 		this.deviceId = this.loadOrCreateDeviceId();
 		this.writer = new AppendOnlyWriter(this.app);
+
+		this.pronouncer = new Pronouncer({
+			app: this.app,
+			deviceId: this.deviceId,
+			settings: () => this.settings,
+			apiKey: () => this.getApiKey(),
+			systemSpeak: (t) => speak(this.app, t),
+			log: (source, extra) => {
+				this.writeEntry(this.entry("tts", { source, ...extra })).catch(() => undefined);
+			},
+			notice: (m) => new Notice(m, 8000),
+			debug: (m) => this.debug(m),
+		});
+		this.registerEvent(this.app.vault.on("create", (f) => this.pronouncer.onCreate(f)));
+		this.registerEvent(this.app.vault.on("delete", (f) => this.pronouncer.onDelete(f)));
+		this.registerEvent(
+			this.app.vault.on("rename", (f, old) => {
+				this.pronouncer.onDelete(old);
+				this.pronouncer.onCreate(f);
+			}),
+		);
+		this.app.workspace.onLayoutReady(() => this.pronouncer.rebuildIndex());
 
 		this.registerView(HOME_VIEW, (leaf) => new HomeView(leaf, this));
 		this.registerView(VERIFY_VIEW, (leaf) => new VerifyView(leaf, this));
@@ -236,8 +260,33 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	// ---------- 朗讀 ----------
+	/** 必須在使用者點擊的事件裡同步呼叫（iOS 播放限制）。 */
 	say(text: string) {
-		speak(this.app, text).catch((e) => this.fail("朗讀", e));
+		unlockAudio();
+		this.pronouncer.pronounce(text).catch((e) => {
+			this.debug(`pronounce failed: ${errMsg(e)}`);
+			speak(this.app, text).catch((e2) => this.fail("朗讀", e2));
+		});
+	}
+
+	/** 驗證用：強制呼叫 Gemini 語音（會計入每日上限）。 */
+	async testGeminiTts(): Promise<string> {
+		unlockAudio();
+		const before = loadQuota(this.app);
+		try {
+			const src: PronounceSource = await this.pronouncer.pronounce("Hello! This is the Gemini voice. Espionage. Lodge a protest.", { forceGemini: true });
+			const q = loadQuota(this.app);
+			const msg =
+				src === "gemini"
+					? `Gemini 語音 OK（${this.settings.ttsModel} / ${this.settings.ttsVoice}）；今天已產生 ${q.count}/${this.settings.ttsDailyCap} 段`
+					: `沒有用到 Gemini 語音（改用 ${src}）${q.exhausted ? "：今天額度已用完" : before.count >= this.settings.ttsDailyCap ? "：達到每日上限" : "：請看除錯紀錄"}`;
+			new Notice(msg, 8000);
+			this.debug(msg);
+			return msg;
+		} catch (e) {
+			this.fail("Gemini 語音", e);
+			return `FAIL：${errMsg(e)}`;
+		}
 	}
 
 	async testTts(): Promise<string> {
