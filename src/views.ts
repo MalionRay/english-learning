@@ -39,7 +39,9 @@ export class HomeView extends ItemView {
 		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}　使用者 ${p.user}` });
 
 		el.createDiv({ cls: "el-row" }, (r) => {
-			const imp = r.createEl("button", { text: "匯入文章", cls: "mod-cta" });
+			const pr = r.createEl("button", { text: "開始練習", cls: "mod-cta" });
+			pr.onclick = () => p.openView("english-learning-practice");
+			const imp = r.createEl("button", { text: "匯入文章" });
 			imp.onclick = () => new ImportModal(this.app, p).open();
 			const s = r.createEl("button", { text: "立即同步" });
 			s.onclick = () => p.triggerSync();
@@ -91,7 +93,7 @@ export class HomeView extends ItemView {
 			if (s.lastError && s.status !== "generated") card.createDiv({ cls: "el-warn", text: `上次失敗：${s.lastError}` });
 		}
 
-		el.createDiv({ cls: "el-muted el-foot", text: "練習介面會在下一版加入；目前可以先開啟題庫檢查題目品質。" });
+
 	}
 }
 

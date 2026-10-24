@@ -18,6 +18,7 @@ import { bankPath, generateForSource, importArticle, resetSource, waitForStatus 
 import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
+import { PRACTICE_VIEW, PracticeView } from "./practice";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
 declare const PLUGIN_VERSION: string;
@@ -31,6 +32,8 @@ export default class EnglishLearningPlugin extends Plugin {
 	/** 這台裝置正在出題的文章路徑 */
 	generating = new Set<string>();
 	pronouncer!: Pronouncer;
+	/** 最後一次 Vault 檔案變動的時間（判斷同步是否結束的備案） */
+	private lastVaultEvent = 0;
 
 	async onload() {
 		await this.loadSettings();
@@ -59,6 +62,15 @@ export default class EnglishLearningPlugin extends Plugin {
 		);
 		this.app.workspace.onLayoutReady(() => this.pronouncer.rebuildIndex());
 
+		const touch = () => (this.lastVaultEvent = Date.now());
+		this.registerEvent(this.app.vault.on("create", touch));
+		this.registerEvent(this.app.vault.on("modify", touch));
+		this.registerEvent(this.app.vault.on("delete", touch));
+		this.registerEvent(this.app.vault.on("rename", touch));
+
+		this.registerView(PRACTICE_VIEW, (leaf) => new PracticeView(leaf, this));
+		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
+		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
 		this.registerView(HOME_VIEW, (leaf) => new HomeView(leaf, this));
 		this.registerView(VERIFY_VIEW, (leaf) => new VerifyView(leaf, this));
 		this.addRibbonIcon("book-open", "English Learning", () => this.openView(HOME_VIEW));
@@ -134,6 +146,14 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	// ---------- log ----------
+	makeEntry(type: LogEntry["type"], extra: Record<string, unknown> = {}): LogEntry {
+		return this.entry(type, extra);
+	}
+
+	appendLog(e: LogEntry): Promise<void> {
+		return this.writeEntry(e);
+	}
+
 	private entry(type: LogEntry["type"], extra: Record<string, unknown> = {}): LogEntry {
 		return { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, user: this.user, type, ...extra };
 	}
@@ -344,6 +364,42 @@ export default class EnglishLearningPlugin extends Plugin {
 		return ok;
 	}
 
+	/**
+	 * 觸發同步並等它結束。Remotely Save 沒有公開的完成事件：
+	 * 優先讀它內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒。
+	 */
+	async syncAndWait(onStatus?: (s: string) => void, maxMs = 90_000): Promise<boolean> {
+		if (typeof navigator !== "undefined" && navigator.onLine === false) {
+			onStatus?.("離線中，略過同步");
+			return false;
+		}
+		const rs = (this.app as unknown as { plugins?: { plugins?: Record<string, { isSyncing?: boolean }> } }).plugins?.plugins?.["remotely-save"];
+		const started = Date.now();
+		const ok = await this.triggerSync(true);
+		if (!ok) return false;
+		const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+		const secs = () => Math.round((Date.now() - started) / 1000);
+		if (rs && typeof rs.isSyncing === "boolean") {
+			// 等它開始（最多 3 秒），再等它結束
+			while (!rs.isSyncing && Date.now() - started < 3000) await sleep(100);
+			while (rs.isSyncing && Date.now() - started < maxMs) {
+				onStatus?.(`同步中…（${secs()} 秒）`);
+				await sleep(300);
+			}
+			const done = !rs.isSyncing;
+			this.debug(`syncAndWait ${done ? "done" : "timeout"} in ${secs()}s (isSyncing)`);
+			return done;
+		}
+		await sleep(1500);
+		while (Date.now() - started < maxMs) {
+			onStatus?.(`同步中…（${secs()} 秒）`);
+			if (Date.now() - this.lastVaultEvent > 3000 && Date.now() - started > 5000) break;
+			await sleep(500);
+		}
+		this.debug(`syncAndWait done in ${secs()}s (quiet heuristic)`);
+		return true;
+	}
+
 	// ---------- 除錯（iOS 沒有 DevTools，寫進 Vault；每台裝置一個檔） ----------
 	debug(msg: string) {
 		const line = `- ${new Date().toISOString()} ${msg.replace(/\n/g, " ⏎ ")}\n`;
@@ -361,14 +417,14 @@ export default class EnglishLearningPlugin extends Plugin {
 		const { workspace } = this.app;
 		let leaf = workspace.getLeavesOfType(type)[0];
 		if (!leaf) {
-			leaf = Platform.isMobile || type === HOME_VIEW ? workspace.getLeaf(true) : (workspace.getRightLeaf(false) ?? workspace.getLeaf(true));
+			leaf = Platform.isMobile || type !== VERIFY_VIEW ? workspace.getLeaf(true) : (workspace.getRightLeaf(false) ?? workspace.getLeaf(true));
 			await leaf.setViewState({ type, active: true });
 		}
 		workspace.revealLeaf(leaf);
 	}
 
 	refreshViews() {
-		for (const type of [HOME_VIEW, VERIFY_VIEW]) {
+		for (const type of [HOME_VIEW, VERIFY_VIEW, PRACTICE_VIEW]) {
 			for (const leaf of this.app.workspace.getLeavesOfType(type)) {
 				const v = leaf.view as unknown as { render?: () => unknown };
 				v.render?.();

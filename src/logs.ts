@@ -8,7 +8,7 @@ export interface LogEntry {
 	ts: string; // ISO 時間戳
 	device: string;
 	user: string;
-	type: "tap" | "api" | "mic" | "sync" | "tts";
+	type: "tap" | "api" | "mic" | "sync" | "tts" | "answer" | "grade";
 	[k: string]: unknown;
 }
 
@@ -88,7 +88,7 @@ export interface Totals {
 	suspicious: string[]; // 不符合 logs/<user>/<deviceId>.jsonl 的檔案（例如衝突副本）
 }
 
-async function listRecursive(app: App, folder: string): Promise<string[]> {
+export async function listRecursive(app: App, folder: string): Promise<string[]> {
 	const out: string[] = [];
 	if (!(await app.vault.adapter.exists(folder))) return out;
 	const { files, folders } = await app.vault.adapter.list(folder);
