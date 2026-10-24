@@ -19,3 +19,29 @@
 .el-say::after { content: " 🔊"; font-size: 0.8em; }
 .el-say.el-sentence { font-style: italic; }
 .markdown-reading-view mark, .markdown-preview-view mark { cursor: pointer; }
+/* 練習 */
+.el-practice { max-width: 760px; margin: 0 auto; }
+.el-practice .el-top { justify-content: space-between; }
+.el-practice .el-quit { margin-left: auto; cursor: pointer; color: var(--text-muted); }
+.el-progress { height: 4px; background: var(--background-modifier-border); border-radius: 2px; margin: 4px 0 12px; }
+.el-progress-bar { height: 100%; background: var(--interactive-accent); border-radius: 2px; transition: width .2s; }
+.el-qcard { padding: 4px 0 24px; }
+.el-qword { font-size: 1.6em; font-weight: 600; margin: 8px 0; }
+.el-qword-small { font-size: 1.2em; font-weight: 600; margin: 6px 0; }
+.el-ipa { color: var(--text-muted); font-weight: 400; font-size: 0.75em; }
+.el-qtext { font-size: 1.15em; line-height: 1.6; margin: 8px 0 12px; }
+.el-context { margin: 6px 0 10px; line-height: 1.5; }
+.el-opts { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.el-practice button.el-opt { display: block; width: 100%; height: auto; min-height: 48px; padding: 10px 14px; text-align: left; white-space: normal; font-size: 1.05em; line-height: 1.4; }
+.el-practice button.el-ok-opt { background: rgba(var(--color-green-rgb), 0.25); border: 1px solid var(--color-green); }
+.el-practice button.el-bad-opt { background: rgba(var(--color-red-rgb), 0.2); border: 1px solid var(--color-red); }
+.el-feedback { border-left: 4px solid var(--background-modifier-border); padding: 8px 12px; margin: 12px 0; background: var(--background-secondary); border-radius: 4px; }
+.el-feedback.is-ok { border-left-color: var(--color-green); }
+.el-feedback.is-bad { border-left-color: var(--color-red); }
+.el-verdict { font-weight: 600; margin-bottom: 6px; }
+.el-explain { margin: 6px 0; line-height: 1.5; }
+.el-answer { min-height: 90px; font-size: 1.1em; }
+.el-big-buttons button { min-height: 44px; padding: 0 18px; font-size: 1.05em; }
+.el-busy { font-size: 1.1em; margin: 24px 0; }
+.el-article { margin: 8px 0; }
+.el-article p { margin: 6px 0; line-height: 1.5; }

@@ -16,7 +16,7 @@
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
 2. 正式功能：
    1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
-   2. 練習介面、SRS 依 log 重算、開始與結束同步流程
+   2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0
    3. 文字對話，錯誤回收進 SRS
    4. 鍵盤聽寫與 TTS 朗讀
    5. 依麥克風測試結果決定語音範圍
@@ -35,6 +35,14 @@
 - Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；收到 429 當天停用；設定有每日上限
 - 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）
+
+## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
+- 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）
+- 翻譯題離線時記 pending: true；之後由「作答的那台裝置」批改，另寫一筆 type "grade"（answerId 對應），不改原紀錄
+- 排程：依時間戳（同時間依 UUID）重播；答對進下一格 LADDER [1,3,7,14,30,60,120,240] 天，生字用 MARKED_LADDER；答錯回第一格；到期提前 4 小時
+- 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
+- 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
+- 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js
