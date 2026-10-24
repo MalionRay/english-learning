@@ -19,6 +19,9 @@ import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
 
+/** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
+declare const PLUGIN_VERSION: string;
+
 const LS_LAST_LEVEL = "english-learning:last-level";
 
 export default class EnglishLearningPlugin extends Plugin {
@@ -98,7 +101,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		);
 
 		this.app.workspace.onLayoutReady(() =>
-			this.debug(`plugin loaded v${this.manifest.version}; device=${this.deviceId}; platform=${platformName()}`),
+			this.debug(`plugin loaded v${PLUGIN_VERSION}; device=${this.deviceId}; platform=${platformName()}`),
 		);
 	}
 
