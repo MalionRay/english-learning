@@ -316,10 +316,20 @@ export class VerifyView extends ItemView {
 		el.createEl("h4", { text: "發音（系統語音）" });
 		const ttsOut = el.createEl("pre", { text: "（尚未測試）" });
 		el.createDiv({ cls: "el-row" }, (r) => {
-			const b = r.createEl("button", { text: "測試發音" });
+			const b = r.createEl("button", { text: "測試系統語音" });
 			b.onclick = async () => {
 				ttsOut.setText("朗讀中…");
 				ttsOut.setText(await p.testTts());
+			};
+			const g = r.createEl("button", { text: "測試 Gemini 語音" });
+			g.onclick = async () => {
+				ttsOut.setText("產生中…");
+				ttsOut.setText(await p.testGeminiTts());
+			};
+			const w = r.createEl("button", { text: "測試字典發音" });
+			w.onclick = () => {
+				ttsOut.setText("播放 espionage（第一次會從字典下載）");
+				p.say("espionage");
 			};
 		});
 
