@@ -47,7 +47,8 @@
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
 - 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
 - 「我不知道」→ correct: false、dontKnow: true
-- 回報有問題的題目：type "flag"／"unflag"（src/flags.ts），讀所有使用者的 log 依時間重播；被回報的題目對所有人不出題，主畫面可恢復
+- 回報有問題的題目：type "flag"／"unflag"（src/flags.ts），讀所有使用者的 log 依時間重播
+- 修正題（src/fixes.ts）：回報時請 AI 出同類型替代題，append 到 english/fixes/<deviceId>.jsonl（type "fix"，replaces 原 qid，新 UUID）；原題被回報時用修正題取代（同一題多個修正取最早），沒有修正就不出；恢復原題後修正題不出
 - 練習畫面頂端一直顯示目前使用者（共用 iPad 避免記錯人）
 - 同步：若自動同步正在跑，先等它結束再觸發一次
 - 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint

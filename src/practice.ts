@@ -1,6 +1,7 @@
 // 練習介面：開始前同步 → 依 SRS 出題 → 作答寫 log → 結束並同步。
 import { App, ItemView, Modal, Notice, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { FLAG_REASONS, loadFlags } from "./flags";
+import { loadFixes, resolveQuestion } from "./fixes";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
@@ -70,9 +71,15 @@ export interface PracticeData {
 }
 
 export async function loadPractice(app: App, user: string, level: LevelFilter): Promise<PracticeData> {
-	const [banks, logs, flags] = await Promise.all([loadBanks(app), loadUserLogs(app, user), loadFlags(app)]);
-	// 被回報有問題的題目不出
-	const pqs = questionsFor(banks, level).filter((x) => !flags.has(x.q.id));
+	const [banks, logs, flags, fixes] = await Promise.all([loadBanks(app), loadUserLogs(app, user), loadFlags(app), loadFixes(app)]);
+	// 被回報的題目：有修正題就換成修正題，沒有就不出
+	const flagged = new Set(flags.keys());
+	const pqs: PQ[] = [];
+	for (const x of questionsFor(banks, level)) {
+		const q = resolveQuestion(x.q, flagged, fixes);
+		if (!q) continue;
+		pqs.push(q === x.q ? x : { q, bank: x.bank, marked: q.type !== "translate" && !!(q as ChoiceQ).marked });
+	}
 	const marked = new Set(pqs.filter((p) => p.marked).map((p) => p.q.id));
 	return { pqs, states: computeStates(logs, marked), logs };
 }
@@ -696,13 +703,31 @@ export class PracticeView extends ItemView {
 		await p.appendLog(p.makeEntry("flag", { qid: pq.q.id, bank: pq.bank.sourceId, qtype: pq.q.type, reason })).catch(() => undefined);
 		// 這場後面如果還排了這題（答錯重練），也拿掉
 		this.items = this.items.filter((x, i) => i <= this.idx || x.q.id !== pq.q.id);
-		new Notice("已回報，這題之後不會再出現（可在主畫面恢復）");
 		p.debug(`flag ${pq.q.id} (${reason})`);
-		if (this.answered) return; // 已作答：留在這頁，按「下一題」繼續
+		const wasAnswered = this.answered;
 		this.answered = true;
-		if (this.idx >= this.items.length - 1) return this.finish();
-		this.idx++;
-		this.drawQuestion();
+
+		// 請 AI 出修正題
+		const note = this.contentEl.createDiv({ cls: "el-busy", text: "已回報。AI 正在出一題修正版…" });
+		note.scrollIntoView({ block: "nearest" });
+		const fixed = await p.fixQuestion(pq.bank, pq.q, reason);
+		if (fixed) {
+			const npq: PQ = { q: fixed, bank: pq.bank, marked: fixed.type !== "translate" && !!(fixed as ChoiceQ).marked };
+			if (!wasAnswered) {
+				new Notice("已換成修正後的題目");
+				this.items[this.idx] = npq;
+				return this.drawQuestion();
+			}
+			note.setText("已出好修正版，之後會當新題出現。按「下一題」繼續。");
+			return;
+		}
+		note.setText("暫時無法出修正版（可能沒有網路）。這題先跳過，之後可在主畫面的回報清單按「重新出這題」。");
+		if (wasAnswered) return;
+		window.setTimeout(() => {
+			if (this.idx >= this.items.length - 1) return this.finish();
+			this.idx++;
+			this.drawQuestion();
+		}, 1500);
 	}
 
 	private nextButton(card: HTMLElement) {
