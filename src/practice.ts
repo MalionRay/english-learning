@@ -10,7 +10,7 @@ import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
-import { AnswerLog, GradeLog, QState, computeStates, pickSession } from "./srs";
+import { AnswerLog, GradeLog, QState, computeStates, newIntroducedToday, pickSession } from "./srs";
 import { gradeListening, gradeTranslation } from "./grade";
 import { cachedZh, translateMany } from "./translate";
 
@@ -318,13 +318,16 @@ export class PracticeView extends ItemView {
 			}
 			for (const t of TYPES) {
 				const qs = t === "phrase" ? d.phrases.map(phrasePQ) : t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
+				const allowed = this.newAllowed(d.logs, qs);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
 				const info = card.createDiv({ cls: "el-type-info" });
 				info.createDiv({ cls: "el-title", text: LABEL[t] });
 				info.createDiv({ cls: "el-muted", text: TYPE_HINT[t] });
-				info.createDiv({ text: `到期 ${pick.dueTotal}・新題 ${pick.freshTotal}・共 ${qs.length}` });
-				const b = card.createEl("button", { text: "開始", cls: pick.dueTotal + pick.freshTotal ? "mod-cta" : "" });
+				const newText = pick.freshTotal && Number.isFinite(allowed) ? `（今天還可練 ${Math.min(allowed, pick.freshTotal)} 題新題）` : "";
+				info.createDiv({ text: `到期 ${pick.dueTotal}・新題 ${pick.freshTotal}${newText}・共 ${qs.length}` });
+				const avail = pick.dueTotal + Math.min(allowed, pick.freshTotal);
+				const b = card.createEl("button", { text: "開始", cls: avail ? "mod-cta" : "" });
 				b.disabled = !qs.length;
 				b.onclick = () => this.start(t);
 			}
@@ -366,13 +369,13 @@ export class PracticeView extends ItemView {
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
 		const pqs = type === "phrase" ? d.phrases.map(phrasePQ) : type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
-		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
+		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size, Date.now(), this.newAllowed(d.logs, pqs));
 		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
 		if (!this.items.length) {
 			this.phase = "start";
 			this.drawStart();
-			new Notice(`「${LABEL[type]}」今天沒有到期的題目了，明天再來！`);
+			new Notice(`「${LABEL[type]}」今天沒有到期的題目，新題也已達每日上限（${p.settings.newPerDay} 題，可在設定調整），明天再來！`, 8000);
 			return;
 		}
 		this.sessionType = type;
@@ -383,6 +386,14 @@ export class PracticeView extends ItemView {
 		this.phase = "question";
 		p.debug(`practice start user=${p.user} type=${type} items=${this.items.length} (due ${pick.due.length}, new ${pick.fresh.length})`);
 		this.drawQuestion();
+	}
+
+	/** 這種題型今天還能練幾題新題。 */
+	private newAllowed(logs: UserLog[], pqs: PQ[]): number {
+		const lim = this.plugin.settings.newPerDay;
+		if (!lim || lim <= 0) return Infinity;
+		const used = newIntroducedToday(logs as AnswerLog[], new Set(pqs.map((x) => x.q.id)));
+		return Math.max(0, lim - used);
 	}
 
 	private async gradePendingInBackground(logs: UserLog[]) {

@@ -141,6 +141,7 @@ export function pickSession<Q extends PlannableQuestion>(
 	states: Map<string, QState>,
 	limit: number,
 	now = Date.now(),
+	newAllowed = Infinity,
 ): { due: Q[]; fresh: Q[]; dueTotal: number; freshTotal: number } {
 	const due: { q: Q; st: QState }[] = [];
 	const fresh: Q[] = [];
@@ -160,6 +161,29 @@ export function pickSession<Q extends PlannableQuestion>(
 		return a.st.due - b.st.due;
 	});
 	const pickedDue = due.slice(0, limit).map((x) => x.q);
-	const pickedFresh = fresh.slice(0, Math.max(0, limit - pickedDue.length));
+	const pickedFresh = fresh.slice(0, Math.max(0, Math.min(limit - pickedDue.length, newAllowed)));
 	return { due: pickedDue, fresh: pickedFresh, dueTotal: due.length, freshTotal: fresh.length };
+}
+
+function localDay(ms: number): string {
+	const d = new Date(ms);
+	return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/** 今天第一次練到的題目數（限定在 qids 裡；同場重答不算）。用來控制每天的新題量。 */
+export function newIntroducedToday(entries: { type: string; qid?: string; ts: string; relearn?: boolean; id: string }[], qids: Set<string>, now = Date.now()): number {
+	const first = new Map<string, number>();
+	const seen = new Set<string>();
+	for (const e of entries) {
+		if (e.type !== "answer" || !e.qid || e.relearn || !qids.has(e.qid) || seen.has(e.id)) continue;
+		seen.add(e.id);
+		const t = Date.parse(e.ts);
+		if (!Number.isFinite(t)) continue;
+		const prev = first.get(e.qid);
+		if (prev === undefined || t < prev) first.set(e.qid, t);
+	}
+	const today = localDay(now);
+	let n = 0;
+	for (const t of first.values()) if (localDay(t) === today) n++;
+	return n;
 }

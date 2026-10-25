@@ -64,3 +64,73 @@ export async function maybeAutoBackup(app: App, deviceId: string): Promise<Backu
 	if (typeof last === "string" && Date.now() - Date.parse(last) < EVERY_DAYS * 24 * 3600 * 1000) return null;
 	return backupNow(app, deviceId);
 }
+
+// ---------------------------------------------------------------------
+// 還原（合併）：不覆蓋任何現有內容
+//   - 檔案不存在 → 從備份建立
+//   - .jsonl 已存在 → 只補上備份裡有、現在沒有的那幾行（依每行的 UUID 判斷）
+//   - .md 已存在 → 保留現在的版本
+
+export interface BackupInfo {
+	file: TFile;
+	device: string;
+	date: string;
+}
+
+export function listBackups(app: App): BackupInfo[] {
+	return app.vault
+		.getFiles()
+		.filter((f) => f.path.startsWith(BACKUP_DIR + "/") && f.extension === "json" && /^\d{4}-\d{2}-\d{2}$/.test(f.basename))
+		.map((f) => ({ file: f, device: f.parent?.name ?? "", date: f.basename }))
+		.sort((a, b) => (a.date === b.date ? (a.device < b.device ? -1 : 1) : a.date < b.date ? 1 : -1));
+}
+
+export interface RestoreResult {
+	created: number;
+	linesAdded: number;
+	kept: number;
+}
+
+function lineId(line: string): string | null {
+	try {
+		const id = JSON.parse(line)?.id;
+		return typeof id === "string" ? id : null;
+	} catch {
+		return null;
+	}
+}
+
+export async function restoreBackup(app: App, file: TFile): Promise<RestoreResult> {
+	const data = JSON.parse(await app.vault.read(file)) as { files?: Record<string, string> };
+	const res: RestoreResult = { created: 0, linesAdded: 0, kept: 0 };
+	for (const [path, content] of Object.entries(data.files ?? {})) {
+		if (typeof content !== "string" || !/\.(jsonl|md)$/.test(path) || path.includes("..")) continue;
+		const p = normalizePath(path);
+		if (!(await app.vault.adapter.exists(p))) {
+			await ensureFolder(app, p.split("/").slice(0, -1).join("/"));
+			await app.vault.create(p, content);
+			res.created++;
+			continue;
+		}
+		if (!p.endsWith(".jsonl")) {
+			res.kept++;
+			continue;
+		}
+		const current = await app.vault.adapter.read(p);
+		const have = new Set(current.split("\n").map(lineId).filter((x): x is string => !!x));
+		const missing = content.split("\n").filter((l) => {
+			const id = l.trim() && lineId(l);
+			return id && !have.has(id);
+		});
+		if (!missing.length) {
+			res.kept++;
+			continue;
+		}
+		const text = (current.endsWith("\n") || !current ? "" : "\n") + missing.join("\n") + "\n";
+		const f = app.vault.getAbstractFileByPath(p);
+		if (f instanceof TFile) await app.vault.append(f, text);
+		else await app.vault.adapter.append(p, text);
+		res.linesAdded += missing.length;
+	}
+	return res;
+}
