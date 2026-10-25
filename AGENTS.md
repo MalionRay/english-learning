@@ -11,6 +11,7 @@
 - SRS 狀態不落檔，啟動時從所有 log 重算
 - 只在匯入來源的裝置出題，以 frontmatter status 防重複
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
+- AI 錯誤用 classifyError 轉成中文（AIError.kind：daily／minute／auth／model／server／network）；每日額度用完後同一模型當天不再呼叫（太平洋時間）
 
 ## 開發順序
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
@@ -41,6 +42,7 @@
 - 翻譯題離線時記 pending: true；之後由「作答的那台裝置」批改，另寫一筆 type "grade"（answerId 對應），不改原紀錄
 - 排程：依時間戳（同時間依 UUID）重播；答對進下一格 LADDER [1,3,7,14,30,60,120,240] 天，生字用 MARKED_LADDER；答錯回第一格；到期提前 4 小時
 - 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
+- 每天新題上限（設定 newPerDay，預設 10，各題型合計）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
 - 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
 - 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
 - 一次只練一種題型（開始畫面依題型列出到期／新題數）
@@ -79,14 +81,17 @@
 
 ## 備份（src/backup.ts）
 - 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
-- 還原目前是手動：從 JSON 的 files 取出內容寫回原路徑
+- 還原（設定 →「從備份還原」，restoreBackup）：只補不蓋——缺少的檔案重建；.jsonl 依每行的 id 補回缺少的行；已存在的 .md 保留不動
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js
 - `npm run check` 掃描是否違反上面的硬性限制；每次改完都要跑
+- `npm test`：test/*.test.ts 用 esbuild 打包（obsidian 換成 test/mocks/obsidian.cjs，DOM 用 jsdom）後由 node --test 執行；每次改完都要跑，新功能要加測試
+- 測試資料只能用自己編的句子，不放真實文章內容（repo 是公開的）
+- GitHub Action 每次推送都跑 build、check、test；推到 main 且測試通過才發布
 - 部署：把 main.js、manifest.json、styles.css 複製到
   `<vault>/.obsidian/plugins/english-learning/`（該資料夾有 .hotreload，Hot Reload 會自動重新載入）
 - 發布（給 iPad/iPhone 的 BRAT）：同時改 manifest.json 與 versions.json 的版本號，推到 main；
-  GitHub Action 會編譯、跑 check，並在該版本沒有 release 時自動發布 main.js、manifest.json、styles.css
+  GitHub Action 會編譯、跑 check 與測試，並在該版本沒有 release 時自動發布 main.js、manifest.json、styles.css
 - 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools）
 - 觸發 Remotely Save 用 app.commands.executeCommandById('remotely-save:start-sync')，是非正式內部 API，失效時退回手動同步

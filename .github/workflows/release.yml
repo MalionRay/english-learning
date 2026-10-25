@@ -1,16 +1,31 @@
-name: Release Obsidian plugin
+name: Test and release Obsidian plugin
 
-# 推到 main 時：若 manifest.json 的版本還沒有 release，就編譯並發布。
+# 每次推送都跑編譯、規則檢查與測試；
+# 推到 main 且 manifest.json 的版本還沒有 release 時，測試通過才發布。
 on:
   push:
-    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check
+      - run: npm test
+
   release:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,8 +49,6 @@ jobs:
         run: npm ci
       - if: steps.exists.outputs.skip == 'false'
         run: npm run build
-      - if: steps.exists.outputs.skip == 'false'
-        run: npm run check
       - if: steps.exists.outputs.skip == 'false'
         name: Create release
         env:

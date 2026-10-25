@@ -5,7 +5,7 @@ import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, LS_TTS_VOICE, defaultVoice, englishVoices, getRate } from "./tts";
 import { loadQuota } from "./pronounce";
-import { LS_LAST_BACKUP } from "./backup";
+import { LS_LAST_BACKUP, listBackups, restoreBackup } from "./backup";
 import { audioUsage, formatBytes } from "./audiocache";
 import { ConfirmModal } from "./views";
 
@@ -32,6 +32,19 @@ export class ELSettingTab extends PluginSettingTab {
 					p.settings.users = v.split(",").map(safeName).filter(Boolean);
 					if (!p.settings.users.length) p.settings.users = ["default"];
 					await p.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("每天新題上限")
+			.setDesc("每種題型每天最多出幾題新題，避免之後複習量一次湧上來。0＝不限。到期的複習題不受影響。")
+			.addText((t) =>
+				t.setValue(String(p.settings.newPerDay)).onChange(async (v) => {
+					const n = Math.max(0, Math.min(500, Math.floor(Number(v))));
+					if (Number.isFinite(n)) {
+						p.settings.newPerDay = n;
+						await p.saveSettings();
+					}
 				}),
 			);
 
@@ -63,6 +76,40 @@ export class ELSettingTab extends PluginSettingTab {
 				`每 7 天自動把答題紀錄、文章與題庫備份到 backup/${p.deviceId}/，保留最近 4 份。上次備份：${typeof lastBackup === "string" ? new Date(lastBackup).toLocaleString() : "還沒有"}`,
 			)
 			.addButton((b) => b.setButtonText("立即備份").onClick(() => p.backup().then(() => this.display())));
+		const backups = listBackups(this.app);
+		let chosen = backups[0]?.file.path ?? "";
+		new Setting(containerEl)
+			.setName("從備份還原")
+			.setDesc(
+				backups.length
+					? "合併還原：補回不見的檔案與紀錄，不會覆蓋或刪除現有內容，可以放心按。建議在其他裝置都同步完、沒有在練習時操作。"
+					: "還沒有任何備份。",
+			)
+			.addDropdown((d) => {
+				for (const b of backups) d.addOption(b.file.path, `${b.date}・${b.device}`);
+				if (chosen) d.setValue(chosen);
+				d.onChange((v) => (chosen = v));
+			})
+			.addButton((b) =>
+				b
+					.setButtonText("還原")
+					.setDisabled(!backups.length)
+					.onClick(() => {
+						const info = backups.find((x) => x.file.path === chosen);
+						if (!info) return;
+						new ConfirmModal(this.app, "從備份還原", `用 ${info.date}（${info.device}）的備份合併還原？只會補回缺少的內容。`, async () => {
+							try {
+								const r = await restoreBackup(this.app, info.file);
+								new Notice(`還原完成：補回 ${r.created} 個檔案、${r.linesAdded} 筆紀錄（其餘 ${r.kept} 個檔案已是最新）`, 10000);
+								p.debug(`restore ${info.file.path}: ${JSON.stringify(r)}`);
+								p.refreshViews();
+								p.triggerSync(true);
+							} catch (e) {
+								new Notice(`還原失敗：${(e as Error)?.message ?? e}`, 10000);
+							}
+						}).open();
+					}),
+			);
 
 		containerEl.createEl("h3", { text: "錄音" });
 		const u = audioUsage(this.app, p.deviceId);

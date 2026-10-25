@@ -5,7 +5,7 @@
 //   4. 系統語音（speechSynthesis）
 // 新取得的錄音存到 english/audio/<deviceId>/<hash>.<ext>：每台裝置只寫自己的資料夾（單一寫入者）。
 import { App, TAbstractFile, TFile, normalizePath, requestUrl } from "obsidian";
-import { AIError } from "./ai";
+import { AIError, quotaDay } from "./ai";
 
 export const AUDIO_DIR = "english/audio";
 const LS_DICT_MISS = "english-learning:dict-miss";
@@ -59,13 +59,7 @@ export function isSingleWord(text: string): boolean {
 // ---------------------------------------------------------------------
 // 每日額度（以 Google 的重置時間：美國太平洋時間午夜為準）
 
-export function quotaDay(d = new Date()): string {
-	try {
-		return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-	} catch {
-		return new Date(d.getTime() - 8 * 3600_000).toISOString().slice(0, 10);
-	}
-}
+export { quotaDay };
 
 interface QuotaState {
 	day: string;
