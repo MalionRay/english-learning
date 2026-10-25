@@ -59,3 +59,5 @@
 .el-opts-zh-row { margin-top: -4px; }
 .el-practice button.el-idk { margin-top: 4px; min-height: 40px; padding: 0 16px; color: var(--text-muted); }
 .el-para { margin: 8px 0; line-height: 1.5; }
+.el-hints { margin: 4px 0; }
+.el-practice input.el-cloze-input { width: 100%; font-size: 1.2em; padding: 10px 12px; height: auto; margin: 10px 0 4px; }

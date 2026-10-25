@@ -159,7 +159,7 @@ Question object shapes:
    {"type":"vocab","direction":"en2zh","word":"<English word/phrase>","ipa":"<American IPA between slashes, e.g. /ˈɛspiəˌnɑʒ/>","context":"<the exact sentence from the article containing it>","contextZh":"<繁中翻譯 of the context sentence>","prompt":"<the English word/phrase>","options":["<4 Traditional Chinese meanings>"],"answer":<0-3>,"explanation":"<繁中：在此句中的意思、詞性、常見搭配或另一個例句>"}
    or with "direction":"zh2en": "prompt" is a Traditional Chinese meaning, "options" are 4 English words/phrases, and add "optionsZh":["<繁中 meaning of each English option, same order>"].
    Wrong options must be plausible but clearly wrong in this context.
-2. Cloze (type "cloze"): take a sentence from the article and replace ONE word or short phrase with "____".
+2. Cloze (type "cloze"): take a sentence from the article and replace ONE word or short phrase with "____". The learner will TYPE the answer, so the blank must be a word or short phrase worth spelling that can be inferred from the sentence and article; never blank out names, numbers or dates. The 3 wrong options are still required (used as data).
    {"type":"cloze","prompt":"<sentence with ____>","promptZh":"<繁中翻譯 of the COMPLETE sentence with the answer filled in>","options":["<4 English candidates>"],"optionsZh":["<繁中 meaning of each option, same order>"],"answer":<0-3>,"explanation":"<繁中：為什麼這個答案正確，其他選項為什麼不對>"}
 3. Reading comprehension (type "reading"):
    {"type":"reading","prompt":"<question in English>","promptZh":"<繁中翻譯 of the question>","options":["<4 English answers>"],"optionsZh":["<繁中翻譯 of each option, same order>"],"answer":<0-3>,"explanation":"<繁中：根據文章哪一段/哪一句>"}

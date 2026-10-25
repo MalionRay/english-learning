@@ -26,7 +26,7 @@
 - english/sources/<標題>.md：frontmatter 有 id、title、level(adult|kid)、status(new|generating|generated)、importedOn
 - english/bank/<id>.md：新建不覆寫；上半部給人看，最後 `<!-- english-learning:bank -->` 後的 JSON 區塊給程式讀
 - 每題有 UUID（id），答題 log 以題目 UUID 對應，不依賴題目在檔案中的位置
-- 題型：vocab、cloze、reading（四選一，選項由程式洗牌）、translate（練習時由 AI 批改）
+- 題型：vocab、reading（四選一，選項由程式洗牌）、cloze（練習時打字作答，答案是 options[answer]；其他選項只當資料）、translate（練習時由 AI 批改）
 - 解釋一律繁體中文（台灣用語）
 - 生字：文章中用 ==字== 標記（匯入時也可填，會自動標記）；出題時一定要考，vocab 題帶 marked: true
 - 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
@@ -47,6 +47,7 @@
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
 - 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
 - 「我不知道」→ correct: false、dontKnow: true
+- 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js
