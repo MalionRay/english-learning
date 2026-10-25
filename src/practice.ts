@@ -100,10 +100,43 @@ type Phase = "start" | "busy" | "question" | "done";
 const TYPES: QType[] = ["vocab", "cloze", "reading", "translate"];
 const TYPE_HINT: Record<QType, string> = {
 	vocab: "看英文選中文（或反過來）",
-	cloze: "句子挖空，選出正確的字",
+	cloze: "句子挖空，自己打出那個字",
 	reading: "依文章內容回答問題",
 	translate: "中翻英，AI 批改",
 };
+
+/** 比對打字答案：不分大小寫、忽略多餘空白、彎引號、句尾標點。 */
+export function normAnswer(s: string): string {
+	return s
+		.toLowerCase()
+		.replace(/[’‘]/g, "'")
+		.replace(/[“”]/g, '"')
+		.replace(/\s+/g, " ")
+		.replace(/^[\s"'(]+|[\s"'.,!?;:)]+$/g, "")
+		.trim();
+}
+
+export function sameAnswer(typed: string, answer: string): boolean {
+	return normAnswer(typed) === normAnswer(answer);
+}
+
+/** 字首提示：d _ _ _ (4)；片語保留空格。 */
+export function letterHint(answer: string): string {
+	const words = answer.trim().split(/\s+/);
+	const shown = words.map((w) => w.split("").map((ch, i) => (i === 0 || !/[a-z]/i.test(ch) ? ch : "_")).join(" ")).join("   ");
+	const count = words.map((w) => w.replace(/[^a-z]/gi, "").length).join(" + ");
+	return `${shown}（${count} 個字母）`;
+}
+
+/** 只差一個字母（多、少、錯一個）。 */
+export function nearMiss(typed: string, answer: string): boolean {
+	const a = normAnswer(typed);
+	const b = normAnswer(answer);
+	if (!a || a === b || Math.abs(a.length - b.length) > 1 || b.length < 4) return false;
+	let i = 0;
+	while (i < a.length && i < b.length && a[i] === b[i]) i++;
+	return a.slice(i + 1) === b.slice(i + 1) || a.slice(i) === b.slice(i + 1) || a.slice(i + 1) === b.slice(i);
+}
 
 export class PracticeView extends ItemView {
 	private phase: Phase = "start";
@@ -412,11 +445,7 @@ export class PracticeView extends ItemView {
 			card.createDiv({ cls: "el-qword", text: cq.prompt });
 			card.createDiv({ cls: "el-muted", text: "選出對應的英文" });
 		} else if (cq.type === "cloze") {
-			const full = cq.prompt.replace("____", cq.options[cq.answer]);
-			const wrap = card.createDiv({ cls: "el-line-wrap" });
-			const line = wrap.createDiv({ cls: "el-line el-qtext" });
-			line.createSpan({ text: cq.prompt });
-			this.zhButton(line, wrap, async () => (await this.zhFor([full], [cq.promptZh]))[0]);
+			return this.drawCloze(card, pq, cq);
 		} else {
 			const wrap = card.createDiv({ cls: "el-line-wrap" });
 			const line = wrap.createDiv({ cls: "el-line el-qtext" });
@@ -486,6 +515,84 @@ export class PracticeView extends ItemView {
 		if (q.type === "cloze") this.sentence(fb, q.prompt.replace("____", q.options[q.answer]), q.promptZh);
 		if (q.explanation) fb.createDiv({ cls: "el-explain", text: q.explanation });
 		this.nextButton(card);
+	}
+
+	/** 克漏字：打字作答（題庫裡的 options[answer] 就是答案，其他選項不再顯示）。 */
+	private drawCloze(card: HTMLElement, pq: PQ, q: ChoiceQ) {
+		const answer = q.options[q.answer];
+		const full = q.prompt.replace("____", answer);
+		const wrap = card.createDiv({ cls: "el-line-wrap" });
+		const line = wrap.createDiv({ cls: "el-line el-qtext" });
+		line.createSpan({ text: q.prompt });
+		this.zhButton(line, wrap, async () => (await this.zhFor([full], [q.promptZh]))[0]);
+
+		// 提示：字首與字母數、中文意思（看了算提示）
+		const hints = card.createDiv({ cls: "el-row el-hints" });
+		const out1 = card.createDiv({ cls: "el-zh" });
+		const out2 = card.createDiv({ cls: "el-zh" });
+		out1.style.display = out2.style.display = "none";
+		const showHint = (out: HTMLElement, t: string) => {
+			if (!this.answered) this.hintUsed = true;
+			out.style.display = "";
+			out.setText(t);
+		};
+		const h1 = hints.createEl("button", { cls: "el-zh-btn", text: "提示：字首" });
+		h1.onclick = () => {
+			h1.addClass("is-on");
+			showHint(out1, letterHint(answer));
+		};
+		const h2 = hints.createEl("button", { cls: "el-zh-btn", text: "提示：中文" });
+		h2.onclick = async () => {
+			h2.addClass("is-on");
+			showHint(out2, "翻譯中…");
+			try {
+				showHint(out2, (await this.zhFor([answer], [q.optionsZh?.[q.answer]]))[0]);
+			} catch (e) {
+				showHint(out2, `無法翻譯：${(e as Error)?.message ?? e}`);
+			}
+		};
+
+		const input = card.createEl("input", {
+			cls: "el-cloze-input",
+			attr: { type: "text", autocapitalize: "off", autocorrect: "off", autocomplete: "off", spellcheck: "false", placeholder: "打出空格裡的字" },
+		});
+		const row = card.createDiv({ cls: "el-row el-big-buttons" });
+		const send = row.createEl("button", { text: "送出", cls: "mod-cta" });
+		const idk = row.createEl("button", { text: "我不知道" });
+
+		const done = (typed: string, dontKnow: boolean) => {
+			if (this.answered) return;
+			this.answered = true;
+			input.disabled = true;
+			send.disabled = true;
+			idk.disabled = true;
+			const correct = !dontKnow && sameAnswer(typed, answer);
+			this.record(pq, { correct, text: typed, dontKnow, hint: this.hintUsed });
+			const fb = card.createDiv({ cls: `el-feedback ${correct ? "is-ok" : "is-bad"}` });
+			let verdict: string;
+			if (correct) verdict = this.hintUsed ? "✓ 答對了（看過提示，這次不拉長間隔）" : "✓ 答對了";
+			else if (dontKnow) verdict = `答案是 ${answer}`;
+			else verdict = `✗ 你寫的是「${typed}」，正確是「${answer}」${nearMiss(typed, answer) ? "（拼字差一點）" : ""}`;
+			fb.createDiv({ cls: "el-verdict", text: verdict });
+			const w = fb.createDiv({ cls: "el-qword-small" });
+			w.createSpan({ cls: "el-say", text: answer });
+			this.sentence(fb, full, q.promptZh);
+			if (q.explanation) fb.createDiv({ cls: "el-explain", text: q.explanation });
+			this.nextButton(card);
+		};
+		send.onclick = () => {
+			const typed = input.value.trim();
+			if (!typed) return new Notice("先打出答案，或按「我不知道」");
+			done(typed, false);
+		};
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				send.click();
+			}
+		});
+		idk.onclick = () => done("", true);
+		window.setTimeout(() => input.focus(), 50);
 	}
 
 	private drawTranslate(card: HTMLElement, pq: PQ, q: TranslateQ) {
