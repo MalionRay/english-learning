@@ -50,7 +50,7 @@ export default class EnglishLearningPlugin extends Plugin {
 			deviceId: this.deviceId,
 			settings: () => this.settings,
 			apiKey: () => this.getApiKey(),
-			systemSpeak: (t) => speak(this.app, t),
+			systemSpeak: (t, r) => speak(this.app, t, r),
 			log: (source, extra) => {
 				this.writeEntry(this.entry("tts", { source, ...extra })).catch(() => undefined);
 			},
@@ -303,9 +303,9 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	// ---------- 朗讀 ----------
 	/** 必須在使用者點擊的事件裡同步呼叫（iOS 播放限制）。 */
-	say(text: string) {
+	say(text: string, rate?: number) {
 		unlockAudio();
-		this.pronouncer.pronounce(text).catch((e) => {
+		this.pronouncer.pronounce(text, rate ? { rate } : {}).catch((e) => {
 			this.debug(`pronounce failed: ${errMsg(e)}`);
 			speak(this.app, text).catch((e2) => this.fail("朗讀", e2));
 		});

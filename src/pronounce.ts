@@ -97,11 +97,13 @@ export function unlockAudio() {
 	}
 }
 
-async function playBuffer(data: ArrayBuffer, mime: string): Promise<void> {
+async function playBuffer(data: ArrayBuffer, mime: string, rate = 1): Promise<void> {
 	if (!player) player = new Audio();
 	if (currentUrl) URL.revokeObjectURL(currentUrl);
 	currentUrl = URL.createObjectURL(new Blob([data], { type: mime }));
 	player.src = currentUrl;
+	player.defaultPlaybackRate = rate;
+	player.playbackRate = rate;
 	await player.play();
 }
 
@@ -207,7 +209,7 @@ export interface PronounceDeps {
 	deviceId: string;
 	settings: () => PronounceSettings;
 	apiKey: () => string | null;
-	systemSpeak: (text: string) => Promise<unknown>;
+	systemSpeak: (text: string, rate?: number) => Promise<unknown>;
 	log: (source: PronounceSource, extra: Record<string, unknown>) => void;
 	notice: (msg: string) => void;
 	debug: (msg: string) => void;
@@ -256,18 +258,19 @@ export class Pronouncer {
 
 	// ---- 主流程 ----
 	/** 呼叫前請先在 click handler 裡同步呼叫 unlockAudio()。 */
-	async pronounce(text: string, opts: { forceGemini?: boolean } = {}): Promise<PronounceSource> {
+	async pronounce(text: string, opts: { forceGemini?: boolean; rate?: number } = {}): Promise<PronounceSource> {
 		const t = normalizeSpeech(text);
 		if (!t) return "system";
 		const key = audioKey(t);
 		const running = this.inflight.get(key);
-		if (running && !opts.forceGemini) return running;
+		if (running && !opts.forceGemini && !opts.rate) return running;
 		const job = this.run(t, key, opts).finally(() => this.inflight.delete(key));
 		this.inflight.set(key, job);
 		return job;
 	}
 
-	private async run(text: string, key: string, opts: { forceGemini?: boolean }): Promise<PronounceSource> {
+	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number }): Promise<PronounceSource> {
+		const rate = opts.rate ?? 1;
 		const s = this.d.settings();
 		// 1. 已存的錄音
 		if (!opts.forceGemini) {
@@ -275,7 +278,7 @@ export class Pronouncer {
 				const f = this.d.app.vault.getAbstractFileByPath(path);
 				if (!(f instanceof TFile)) continue;
 				try {
-					await playBuffer(await this.d.app.vault.readBinary(f), mimeFor(path));
+					await playBuffer(await this.d.app.vault.readBinary(f), mimeFor(path), rate);
 					return "cache";
 				} catch (e) {
 					this.d.debug(`play cache failed ${path}: ${(e as Error)?.name ?? e}`);
@@ -289,7 +292,7 @@ export class Pronouncer {
 				if (got) {
 					await this.save(key, "mp3", got);
 					this.d.log("dict", { text });
-					await playBuffer(got, "audio/mpeg");
+					await playBuffer(got, "audio/mpeg", rate);
 					return "dict";
 				}
 				this.markDictMiss(text);
@@ -307,7 +310,7 @@ export class Pronouncer {
 				saveQuota(this.d.app, q);
 				await this.save(key, "wav", wav);
 				this.d.log("gemini", { text: text.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count });
-				await playBuffer(wav, "audio/wav");
+				await playBuffer(wav, "audio/wav", rate);
 				return "gemini";
 			} catch (e) {
 				if (e instanceof AIError && e.status === 429) {
@@ -322,7 +325,7 @@ export class Pronouncer {
 			}
 		}
 		// 4. 系統語音
-		await this.d.systemSpeak(text);
+		await this.d.systemSpeak(text, opts.rate);
 		return "system";
 	}
 

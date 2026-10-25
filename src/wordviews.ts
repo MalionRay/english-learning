@@ -185,7 +185,7 @@ export class StatsView extends ItemView {
 		});
 
 		el.createEl("h4", { text: "各題型正確率（最近 30 天）" });
-		const labels: Record<string, string> = { ...TYPE_LABEL, word: "生字複習" };
+		const labels: Record<string, string> = { ...TYPE_LABEL, word: "生字複習", dictation: "聽寫" };
 		const types = Object.keys(s.byType);
 		if (!types.length) el.createDiv({ cls: "el-muted", text: "還沒有作答紀錄" });
 		for (const t of types) {
