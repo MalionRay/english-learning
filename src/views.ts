@@ -5,6 +5,7 @@ import { DEBUG_ROOT, logPath } from "./logs";
 import { LEVEL_LABEL, Level, MAX_WORDS, Question, TYPE_LABEL, parseBank, planFor, planTotal, wordCount } from "./generate";
 import { bankPath, canGenerate, listSources } from "./sources";
 import { FlagLog, loadFlags } from "./flags";
+import { loadFixes } from "./fixes";
 import { TFile } from "obsidian";
 
 // =====================================================================
@@ -105,7 +106,7 @@ export class HomeView extends ItemView {
 				for (const [bank, list] of byBank) {
 					const card = cards.get(bank);
 					if (!card) continue;
-					const a = card.createEl("a", { cls: "el-warn el-flag-link", text: `⚑ ${list.length} 題被回報有問題（不會出題）` });
+					const a = card.createEl("a", { cls: "el-warn el-flag-link", text: `⚑ ${list.length} 題被回報（點這裡查看、修正或恢復）` });
 					a.onclick = () => new FlaggedModal(this.app, p, bank, list).open();
 				}
 			})
@@ -183,7 +184,9 @@ export class FlaggedModal extends Modal {
 		this.setTitle("被回報的題目");
 		const f = this.app.vault.getAbstractFileByPath(bankPath(this.bankId));
 		const bank = f instanceof TFile ? parseBank(await this.app.vault.cachedRead(f)) : null;
+		const fixes = await loadFixes(this.app);
 		const qs = new Map<string, Question>((bank?.questions ?? []).map((q) => [q.id, q]));
+		for (const fx of fixes.values()) if (fx.bank === this.bankId) qs.set(fx.question.id, fx.question);
 		for (const fl of this.flags) {
 			const q = qs.get(fl.qid);
 			const box = this.contentEl.createDiv({ cls: "el-card" });
@@ -193,7 +196,21 @@ export class FlaggedModal extends Modal {
 				if (q.type !== "translate") box.createDiv({ cls: "el-muted", text: `標示的答案：${q.options[q.answer]}` });
 				else box.createDiv({ cls: "el-muted", text: `參考答案：${q.reference}` });
 			} else box.createDiv({ cls: "el-muted", text: "（找不到題目，可能題庫已重新產生）" });
-			const b = box.createEl("button", { text: "恢復出題" });
+			const row = box.createDiv({ cls: "el-row" });
+			const fx = fixes.get(fl.qid);
+			if (fx) row.createSpan({ cls: "el-ok", text: "✓ 已換成修正題" });
+			else if (q && bank) {
+				const re = row.createEl("button", { text: "重新出這題", cls: "mod-cta" });
+				re.onclick = async () => {
+					re.disabled = true;
+					re.setText("出題中…");
+					const nq = await this.plugin.fixQuestion(bank, q, fl.reason ?? "其他");
+					re.setText(nq ? "✓ 已換成修正題" : "失敗，請確認網路後再試");
+					if (!nq) re.disabled = false;
+					this.plugin.refreshViews();
+				};
+			}
+			const b = row.createEl("button", { text: "恢復原題" });
 			b.onclick = async () => {
 				const p = this.plugin;
 				await p.appendLog(p.makeEntry("unflag", { qid: fl.qid, bank: fl.bank }));
