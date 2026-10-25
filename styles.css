@@ -84,3 +84,10 @@
 .el-acc-track { flex: 1; height: 10px; background: var(--background-modifier-border); border-radius: 5px; overflow: hidden; }
 .el-acc-fill { height: 100%; background: var(--color-green); }
 .el-acc-num { width: 8.5em; flex: none; text-align: right; font-size: 0.9em; }
+/* 聽寫 */
+.el-diff { font-size: 1.1em; line-height: 1.9; margin: 6px 0 10px; }
+.el-d-ok { color: var(--color-green); }
+.el-d-miss { background: rgba(var(--color-red-rgb), 0.25); border-radius: 3px; padding: 0 2px; }
+.el-d-wrong { background: rgba(var(--color-red-rgb), 0.12); border-radius: 3px; padding: 0 2px; }
+.el-d-typed { text-decoration: line-through; color: var(--text-muted); margin-right: 4px; }
+.el-d-extra { text-decoration: line-through; color: var(--text-faint); }

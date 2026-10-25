@@ -46,7 +46,7 @@ export function getRate(app: App): number {
 	return r >= 0.5 && r <= 1.5 ? r : 0.9;
 }
 
-export async function speak(app: App, text: string): Promise<SpeechSynthesisVoice | undefined> {
+export async function speak(app: App, text: string, rate?: number): Promise<SpeechSynthesisVoice | undefined> {
 	const s = synth();
 	if (!s || !ttsAvailable()) throw new Error("這台裝置不支援語音朗讀（speechSynthesis）");
 	const t = text.replace(/\s+/g, " ").trim();
@@ -58,7 +58,7 @@ export async function speak(app: App, text: string): Promise<SpeechSynthesisVoic
 	const u = new SpeechSynthesisUtterance(t);
 	u.lang = voice?.lang ?? "en-US";
 	if (voice) u.voice = voice;
-	u.rate = getRate(app);
+	u.rate = getRate(app) * (rate ?? 1);
 	s.speak(u);
 	return voice;
 }
