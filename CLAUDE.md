@@ -16,7 +16,7 @@
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
 2. 正式功能：
    1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
-   2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0
+   2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0；回報與修正、備份 ← v0.7.x；生字本、點字、統計 ← v0.8.0
    3. 文字對話，錯誤回收進 SRS
    4. 鍵盤聽寫與 TTS 朗讀
    5. 依麥克風測試結果決定語音範圍
@@ -53,6 +53,12 @@
 - 練習畫面頂端一直顯示目前使用者（共用 iPad 避免記錯人）
 - 同步：若自動同步正在跑，先等它結束再觸發一次
 - 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint
+
+## 生字本與統計（src/words.ts、src/wordviews.ts）
+- 生字本每位使用者一本，不另存檔：從題庫的標記生字、vocab/cloze 答錯紀錄、log 的 "word-add"／"word-remove" 推導
+- 生字複習用 SRS，qid 為 "word:<key>"、qtype "word"、bank "words"
+- 練習畫面的英文句子逐字可點（Menu：唸、看中文、加入生字本）；作答前看中文算 hint
+- 統計：連續天數、今日題數、30 天長條圖、各題型正確率（30 天）、已熟練（step ≥ 3）
 
 ## 備份（src/backup.ts）
 - 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份

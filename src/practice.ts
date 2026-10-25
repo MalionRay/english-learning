@@ -2,6 +2,8 @@
 import { App, ItemView, Modal, Notice, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { FLAG_REASONS, loadFlags } from "./flags";
 import { loadFixes, resolveQuestion } from "./fixes";
+import { WordItem, WordLog, buildWordBook, wordKey, wordQid } from "./words";
+import { Menu } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
@@ -21,6 +23,7 @@ export interface PQ {
 	bank: Bank;
 	marked: boolean;
 	relearn?: boolean;
+	word?: WordItem; // 生字複習
 }
 
 // ---------------------------------------------------------------------
@@ -36,15 +39,17 @@ export async function loadBanks(app: App): Promise<Bank[]> {
 	return out.sort((a, b) => (a.generatedAt < b.generatedAt ? -1 : 1));
 }
 
-export async function loadUserLogs(app: App, user: string): Promise<(AnswerLog | GradeLog)[]> {
-	const out: (AnswerLog | GradeLog)[] = [];
+export type UserLog = AnswerLog | GradeLog | WordLog;
+
+export async function loadUserLogs(app: App, user: string): Promise<UserLog[]> {
+	const out: UserLog[] = [];
 	for (const path of await listRecursive(app, `${LOG_ROOT}/${safeName(user)}`)) {
 		if (!path.endsWith(".jsonl")) continue;
 		for (const line of (await app.vault.adapter.read(path)).split("\n")) {
 			if (!line.trim()) continue;
 			try {
 				const e = JSON.parse(line);
-				if (e?.type === "answer" || e?.type === "grade") out.push(e);
+				if (e?.type === "answer" || e?.type === "grade" || e?.type === "word-add" || e?.type === "word-remove") out.push(e);
 			} catch {
 				/* 壞行略過 */
 			}
@@ -67,7 +72,21 @@ export function questionsFor(banks: Bank[], level: LevelFilter): PQ[] {
 export interface PracticeData {
 	pqs: PQ[];
 	states: Map<string, QState>;
-	logs: (AnswerLog | GradeLog)[];
+	logs: UserLog[];
+	words: WordItem[];
+	banks: Bank[];
+}
+
+/** 生字複習用的假題庫（生字不屬於某一篇文章）。 */
+export const WORD_BANK: Bank = { version: 1, sourceId: "words", sourcePath: "", title: "生字本", level: "adult", model: "", generatedAt: "", device: "", questions: [] };
+
+export function wordPQ(w: WordItem): PQ {
+	return {
+		q: { id: wordQid(w.key), type: "vocab", prompt: w.word, options: [], answer: 0, explanation: "" },
+		bank: WORD_BANK,
+		marked: w.reasons.has("marked"),
+		word: w,
+	};
 }
 
 export async function loadPractice(app: App, user: string, level: LevelFilter): Promise<PracticeData> {
@@ -80,12 +99,17 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 		if (!q) continue;
 		pqs.push(q === x.q ? x : { q, bank: x.bank, marked: q.type !== "translate" && !!(q as ChoiceQ).marked });
 	}
-	const marked = new Set(pqs.filter((p) => p.marked).map((p) => p.q.id));
-	return { pqs, states: computeStates(logs, marked), logs };
+	const words = buildWordBook(
+		banks.filter((b) => level === "all" || b.level === level),
+		logs,
+	);
+	const marked = new Set([...pqs.filter((p) => p.marked).map((p) => p.q.id), ...words.filter((w) => w.reasons.has("marked")).map((w) => wordQid(w.key))]);
+	const answerLogs = logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade");
+	return { pqs, states: computeStates(answerLogs, marked), logs, words, banks };
 }
 
 /** 這台裝置自己的、還沒批改的翻譯作答（只批改自己的，避免兩台同時批改同一題）。 */
-export function pendingAnswers(logs: (AnswerLog | GradeLog)[], deviceId: string): AnswerLog[] {
+export function pendingAnswers(logs: UserLog[], deviceId: string): AnswerLog[] {
 	const graded = new Set(logs.filter((e): e is GradeLog => e.type === "grade").map((g) => g.answerId));
 	return logs.filter((e): e is AnswerLog => e.type === "answer" && !!e.pending && e.device === deviceId && !graded.has(e.id));
 }
@@ -106,8 +130,11 @@ interface Prefs {
 
 type Phase = "start" | "busy" | "question" | "done";
 
-const TYPES: QType[] = ["vocab", "cloze", "reading", "translate"];
-const TYPE_HINT: Record<QType, string> = {
+type SessionType = QType | "word";
+const TYPES: SessionType[] = ["word", "vocab", "cloze", "reading", "translate"];
+const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習" };
+const TYPE_HINT: Record<SessionType, string> = {
+	word: "生字本裡的字：看英文回想中文，再翻面確認",
 	vocab: "看英文選中文（或反過來）",
 	cloze: "句子挖空，自己打出那個字",
 	reading: "依文章內容回答問題",
@@ -151,7 +178,8 @@ export class PracticeView extends ItemView {
 	private phase: Phase = "start";
 	private busyText = "";
 	private sessionId = "";
-	private sessionType: QType = "vocab";
+	private sessionType: SessionType = "vocab";
+	private wordKeys = new Set<string>(); // 生字本裡已有的字（點字選單用）
 	private items: PQ[] = [];
 	private idx = 0;
 	private results: Result[] = [];
@@ -261,11 +289,11 @@ export class PracticeView extends ItemView {
 				return;
 			}
 			for (const t of TYPES) {
-				const qs = d.pqs.filter((x) => x.q.type === t);
+				const qs = t === "word" ? d.words.map(wordPQ) : d.pqs.filter((x) => x.q.type === t);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
 				const info = card.createDiv({ cls: "el-type-info" });
-				info.createDiv({ cls: "el-title", text: TYPE_LABEL[t] });
+				info.createDiv({ cls: "el-title", text: LABEL[t] });
 				info.createDiv({ cls: "el-muted", text: TYPE_HINT[t] });
 				info.createDiv({ text: `到期 ${pick.dueTotal}・新題 ${pick.freshTotal}・共 ${qs.length}` });
 				const b = card.createEl("button", { text: "開始", cls: pick.dueTotal + pick.freshTotal ? "mod-cta" : "" });
@@ -293,7 +321,7 @@ export class PracticeView extends ItemView {
 	}
 
 	// ---- 開始 ----
-	private async start(type: QType) {
+	private async start(type: SessionType) {
 		const p = this.plugin;
 		const prefs = this.prefs();
 		if (prefs.sync) {
@@ -308,14 +336,15 @@ export class PracticeView extends ItemView {
 		const d = await loadPractice(this.app, p.user, prefs.level);
 		this.gradePendingInBackground(d.logs);
 
-		const pqs = d.pqs.filter((x) => x.q.type === type);
+		this.wordKeys = new Set(d.words.map((w) => w.key));
+		const pqs = type === "word" ? d.words.map(wordPQ) : d.pqs.filter((x) => x.q.type === type);
 		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
 		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
 		if (!this.items.length) {
 			this.phase = "start";
 			this.drawStart();
-			new Notice(`「${TYPE_LABEL[type]}」今天沒有到期的題目了，明天再來！`);
+			new Notice(`「${LABEL[type]}」今天沒有到期的題目了，明天再來！`);
 			return;
 		}
 		this.sessionType = type;
@@ -328,7 +357,7 @@ export class PracticeView extends ItemView {
 		this.drawQuestion();
 	}
 
-	private async gradePendingInBackground(logs: (AnswerLog | GradeLog)[]) {
+	private async gradePendingInBackground(logs: UserLog[]) {
 		const p = this.plugin;
 		const pend = pendingAnswers(logs, p.deviceId);
 		if (!pend.length || !p.getApiKey()) return;
@@ -391,10 +420,106 @@ export class PracticeView extends ItemView {
 
 	/** 一行英文（可點擊朗讀）＋「中」按鈕＋翻譯區。 */
 	private sentence(parent: HTMLElement, text: string, zh: string | undefined, cls = "el-sentence") {
+		this.wordLine(parent, text, { zh, cls, bank: this.items[this.idx]?.bank });
+	}
+
+	/**
+	 * 英文句子：每個字都可以點（選單：唸、看中文、加入生字本），句尾 🔊 唸整句，「中」看整句翻譯。
+	 * zhText 是整句翻譯要翻的文字（克漏字用完整句）；say=false 不放整句朗讀。
+	 */
+	private wordLine(parent: HTMLElement, text: string, o: { zh?: string; zhText?: string; cls?: string; say?: boolean; bank?: Bank } = {}) {
 		const wrap = parent.createDiv({ cls: "el-line-wrap" });
-		const line = wrap.createDiv({ cls: "el-line" });
-		line.createSpan({ cls: `el-say ${cls}`, text });
-		this.zhButton(line, wrap, async () => (await this.zhFor([text], [zh]))[0]);
+		const line = wrap.createDiv({ cls: `el-line ${o.cls ?? "el-sentence"}` });
+		const words = line.createSpan({ cls: "el-words" });
+		for (const tok of text.split(/(\s+)/)) {
+			const m = tok.match(/^([^A-Za-z]*)([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])(.*)$/);
+			if (!m) {
+				words.appendChild(document.createTextNode(tok));
+				continue;
+			}
+			if (m[1]) words.appendChild(document.createTextNode(m[1]));
+			const w = words.createSpan({ cls: "el-w", text: m[2] });
+			w.onclick = (e) => this.wordMenu(e, m[2], text, o.bank);
+			if (m[3]) words.appendChild(document.createTextNode(m[3]));
+		}
+		if (o.say !== false) {
+			const say = line.createEl("button", { cls: "el-zh-btn el-say-btn", text: "🔊" });
+			say.onclick = (e) => {
+				e.stopPropagation();
+				this.plugin.say(text);
+			};
+		}
+		const zhText = o.zhText ?? text;
+		this.zhButton(line, wrap, async () => (await this.zhFor([zhText], [o.zh]))[0]);
+	}
+
+	private wordMenu(evt: MouseEvent, word: string, sentence: string, bank?: Bank) {
+		const menu = new Menu();
+		menu.addItem((i) => i.setTitle(`🔊 唸 ${word}`).onClick(() => this.plugin.say(word)));
+		menu.addItem((i) =>
+			i.setTitle("看中文意思").onClick(async () => {
+				if (!this.answered) this.hintUsed = true;
+				try {
+					new Notice(`${word}：${(await this.zhFor([word]))[0]}`, 8000);
+				} catch (e) {
+					new Notice(`無法翻譯：${(e as Error)?.message ?? e}`);
+				}
+			}),
+		);
+		const inBook = this.wordKeys.has(wordKey(word));
+		menu.addItem((i) =>
+			i
+				.setTitle(inBook ? "✓ 已在生字本" : "＋ 加入生字本")
+				.setDisabled(inBook)
+				.onClick(async () => {
+					this.wordKeys.add(wordKey(word));
+					await this.plugin.addWord(word, sentence, bank && bank !== WORD_BANK ? bank.sourceId : undefined);
+				}),
+		);
+		menu.showAtMouseEvent(evt);
+	}
+
+	/** 生字複習：看英文回想中文 → 翻面 → 記得／不記得。 */
+	private drawWordCard(card: HTMLElement, pq: PQ, w: WordItem) {
+		const head = card.createDiv({ cls: "el-qword el-line" });
+		head.createSpan({ cls: "el-say", text: w.word });
+		if (w.ipa) head.createSpan({ cls: "el-ipa", text: ` ${w.ipa}` });
+		if (w.context) this.wordLine(card, w.context, { zh: w.contextZh });
+		const tags: string[] = [];
+		if (w.reasons.has("marked")) tags.push("標記的生字");
+		if (w.wrong) tags.push(`答錯 ${w.wrong} 次`);
+		if (w.reasons.has("manual")) tags.push("自己加入");
+		card.createDiv({ cls: "el-muted", text: `先想想它的意思。${tags.length ? `（${tags.join("、")}）` : ""}` });
+
+		const back = card.createDiv({ cls: "el-feedback" });
+		back.style.display = "none";
+		const row = card.createDiv({ cls: "el-row el-big-buttons" });
+		const show = row.createEl("button", { text: "看答案", cls: "mod-cta" });
+		show.onclick = async () => {
+			show.remove();
+			back.style.display = "";
+			const m = back.createDiv({ cls: "el-qword-small", text: w.meaning ?? "查詢中…" });
+			if (!w.meaning) {
+				try {
+					w.meaning = (await this.zhFor([w.word]))[0];
+					m.setText(w.meaning);
+				} catch (e) {
+					m.setText(`（無法取得中文：${(e as Error)?.message ?? e}）`);
+				}
+			}
+			const r2 = card.createDiv({ cls: "el-row el-big-buttons" });
+			const yes = r2.createEl("button", { text: "記得", cls: "mod-cta" });
+			const no = r2.createEl("button", { text: "不記得" });
+			const done = (correct: boolean) => {
+				if (this.answered) return;
+				this.answered = true;
+				yes.disabled = no.disabled = true;
+				this.record(pq, { correct });
+				this.nextButton(card);
+			};
+			yes.onclick = () => done(true);
+			no.onclick = () => done(false);
+		};
 	}
 
 	/** 選項的中文：一個按鈕切換全部選項下方的中文。 */
@@ -438,15 +563,18 @@ export class PracticeView extends ItemView {
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
-		top.createSpan({ cls: "el-badge", text: TYPE_LABEL[q.type] });
+		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
-		const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
-		flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
+		if (!pq.word) {
+			const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
+			flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
+		}
 		el.createDiv({ cls: "el-progress" }).createDiv({ cls: "el-progress-bar" }).style.width = `${Math.round((this.idx / this.items.length) * 100)}%`;
 
 		const card = el.createDiv({ cls: "el-qcard" });
+		if (pq.word) return this.drawWordCard(card, pq, pq.word);
 		if (q.type === "translate") return this.drawTranslate(card, pq, q);
 
 		const cq = q as ChoiceQ;
@@ -464,10 +592,7 @@ export class PracticeView extends ItemView {
 		} else if (cq.type === "cloze") {
 			return this.drawCloze(card, pq, cq);
 		} else {
-			const wrap = card.createDiv({ cls: "el-line-wrap" });
-			const line = wrap.createDiv({ cls: "el-line el-qtext" });
-			line.createSpan({ cls: "el-say", text: cq.prompt });
-			this.zhButton(line, wrap, async () => (await this.zhFor([cq.prompt], [cq.promptZh]))[0]);
+			this.wordLine(card, cq.prompt, { zh: cq.promptZh, cls: "el-qtext", bank: pq.bank });
 			this.articleToggle(card, pq.bank);
 		}
 
@@ -499,10 +624,7 @@ export class PracticeView extends ItemView {
 			if (!(f instanceof TFile)) return body.setText("找不到文章（可能還沒同步）");
 			const text = stripMarks(stripFrontmatter(await this.app.vault.cachedRead(f)));
 			for (const para of text.split(/\n/).map((s) => s.trim()).filter(Boolean)) {
-				const wrap = body.createDiv({ cls: "el-line-wrap el-para" });
-				const line = wrap.createDiv({ cls: "el-line" });
-				line.createSpan({ text: para });
-				this.zhButton(line, wrap, async () => (await this.zhFor([para]))[0]);
+				this.wordLine(body, para, { cls: "el-para", bank });
 			}
 		});
 	}
@@ -538,10 +660,7 @@ export class PracticeView extends ItemView {
 	private drawCloze(card: HTMLElement, pq: PQ, q: ChoiceQ) {
 		const answer = q.options[q.answer];
 		const full = q.prompt.replace("____", answer);
-		const wrap = card.createDiv({ cls: "el-line-wrap" });
-		const line = wrap.createDiv({ cls: "el-line el-qtext" });
-		line.createSpan({ text: q.prompt });
-		this.zhButton(line, wrap, async () => (await this.zhFor([full], [q.promptZh]))[0]);
+		this.wordLine(card, q.prompt, { zh: q.promptZh, zhText: full, cls: "el-qtext", say: false, bank: pq.bank });
 
 		// 提示：字首與字母數、中文意思（看了算提示）
 		const hints = card.createDiv({ cls: "el-row el-hints" });
@@ -672,8 +791,8 @@ export class PracticeView extends ItemView {
 		const p = this.plugin;
 		const extra: Record<string, unknown> = {
 			qid: pq.q.id,
-			bank: pq.bank.sourceId,
-			qtype: pq.q.type,
+			bank: pq.word ? WORD_BANK.sourceId : pq.bank.sourceId,
+			qtype: pq.word ? "word" : pq.q.type,
 			session: this.sessionId,
 		};
 		if (r.correct !== undefined) extra.correct = r.correct;
@@ -758,7 +877,7 @@ export class PracticeView extends ItemView {
 	private finish() {
 		this.phase = "done";
 		const el = this.root();
-		el.createEl("h3", { text: `練習結果：${TYPE_LABEL[this.sessionType]}` });
+		el.createEl("h3", { text: `練習結果：${LABEL[this.sessionType]}` });
 		const graded = this.results.filter((r) => r.correct !== undefined);
 		const right = graded.filter((r) => r.correct).length;
 		const pend = this.results.filter((r) => r.pending).length;
@@ -772,7 +891,10 @@ export class PracticeView extends ItemView {
 			for (const r of wrong) {
 				const q = r.pq.q;
 				const li = ul.createEl("li");
-				if (q.type === "vocab" && q.word) {
+				if (r.pq.word) {
+					li.createSpan({ cls: "el-say", text: r.pq.word.word });
+					if (r.pq.word.meaning) li.createSpan({ cls: "el-muted", text: `　${r.pq.word.meaning}` });
+				} else if (q.type === "vocab" && q.word) {
 					li.createSpan({ cls: "el-say", text: q.word });
 					li.createSpan({ cls: "el-muted", text: `　${q.direction === "zh2en" ? q.prompt : q.options[q.answer]}` });
 				} else li.createSpan({ text: q.type === "translate" ? q.prompt : q.prompt.slice(0, 80) });
