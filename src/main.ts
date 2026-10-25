@@ -21,7 +21,9 @@ import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce
 import { PRACTICE_VIEW, PracticeView, loadBanks, loadPractice } from "./practice";
 import { CleanupPlan, PrefetchResult, audioTextsOfBanks, formatBytes, planCleanup, prefetchAudio } from "./audiocache";
 import { parseBank } from "./generate";
-import { STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
+import { PHRASES_VIEW, PhrasesView, STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
+import { CHAT_VIEW, ChatView } from "./chatview";
+import type { PhraseLog } from "./chat";
 import { cachedZh, translateMany } from "./translate";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
@@ -99,6 +101,11 @@ export default class EnglishLearningPlugin extends Plugin {
 
 		this.registerView(PRACTICE_VIEW, (leaf) => new PracticeView(leaf, this));
 		this.registerView(WORDS_VIEW, (leaf) => new WordsView(leaf, this));
+		this.registerView(PHRASES_VIEW, (leaf) => new PhrasesView(leaf, this));
+		this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
+		this.addRibbonIcon("messages-square", "English Learning：英文對話", () => this.openView(CHAT_VIEW));
+		this.addCommand({ id: "chat", name: "英文對話", callback: () => this.openView(CHAT_VIEW) });
+		this.addCommand({ id: "phrases", name: "開啟句子本", callback: () => this.openView(PHRASES_VIEW) });
 		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
 		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
 		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
@@ -506,6 +513,18 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.debug(`audio cleanup: ${n} files, ${plan.bytes} bytes`);
 	}
 
+	/** append 到某個檔案（對話檔；單一寫入者＝開始對話的裝置）。 */
+	appendText(file: TFile, text: string): Promise<void> {
+		return this.writer.append(file.path, text);
+	}
+
+	/** 加入句子本（寫在目前使用者的 log）。 */
+	async addPhrase(p: Omit<PhraseLog, "id" | "ts" | "device" | "user" | "type">): Promise<void> {
+		const extra: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== "") extra[k] = v;
+		await this.appendLog(this.makeEntry("phrase-add", extra));
+	}
+
 	/** 加入生字本（寫在目前使用者的 log）。有網路時順便查好中文。 */
 	async addWord(word: string, context?: string, bank?: string): Promise<void> {
 		let meaning = cachedZh(this.app, word);
@@ -587,7 +606,7 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	refreshViews() {
-		for (const type of [HOME_VIEW, VERIFY_VIEW, PRACTICE_VIEW, WORDS_VIEW, STATS_VIEW]) {
+		for (const type of [HOME_VIEW, VERIFY_VIEW, PRACTICE_VIEW, WORDS_VIEW, STATS_VIEW, PHRASES_VIEW, CHAT_VIEW]) {
 			for (const leaf of this.app.workspace.getLeavesOfType(type)) {
 				const v = leaf.view as unknown as { render?: () => unknown };
 				v.render?.();

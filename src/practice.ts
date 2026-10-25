@@ -4,6 +4,7 @@ import { FLAG_REASONS, loadFlags } from "./flags";
 import { loadFixes, resolveQuestion } from "./fixes";
 import { WordItem, WordLog, buildWordBook, wordKey, wordQid } from "./words";
 import { DictItem, dictationItems } from "./dictation";
+import { PhraseItem, PhraseLog, buildPhraseBook, phraseQid } from "./chat";
 import { Menu } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
@@ -25,7 +26,8 @@ export interface PQ {
 	marked: boolean;
 	relearn?: boolean;
 	word?: WordItem; // 生字複習
-	dict?: DictItem; // 聽寫
+	dict?: DictItem; // 聽力
+	phrase?: PhraseItem; // 句子本
 }
 
 // ---------------------------------------------------------------------
@@ -41,7 +43,7 @@ export async function loadBanks(app: App): Promise<Bank[]> {
 	return out.sort((a, b) => (a.generatedAt < b.generatedAt ? -1 : 1));
 }
 
-export type UserLog = AnswerLog | GradeLog | WordLog;
+export type UserLog = AnswerLog | GradeLog | WordLog | PhraseLog;
 
 export async function loadUserLogs(app: App, user: string): Promise<UserLog[]> {
 	const out: UserLog[] = [];
@@ -51,7 +53,7 @@ export async function loadUserLogs(app: App, user: string): Promise<UserLog[]> {
 			if (!line.trim()) continue;
 			try {
 				const e = JSON.parse(line);
-				if (e?.type === "answer" || e?.type === "grade" || e?.type === "word-add" || e?.type === "word-remove") out.push(e);
+				if (["answer", "grade", "word-add", "word-remove", "phrase-add", "phrase-remove"].includes(e?.type)) out.push(e);
 			} catch {
 				/* 壞行略過 */
 			}
@@ -77,6 +79,7 @@ export interface PracticeData {
 	logs: UserLog[];
 	words: WordItem[];
 	dicts: DictItem[];
+	phrases: PhraseItem[];
 	banks: Bank[];
 }
 
@@ -89,6 +92,15 @@ export function dictPQ(d: DictItem, banks: Bank[]): PQ {
 		bank: banks.find((b) => b.sourceId === d.bank) ?? WORD_BANK,
 		marked: false,
 		dict: d,
+	};
+}
+
+export function phrasePQ(ph: PhraseItem): PQ {
+	return {
+		q: { id: phraseQid(ph.key), type: "translate", prompt: ph.zh, reference: ph.en, explanation: ph.note ?? "" },
+		bank: WORD_BANK,
+		marked: false,
+		phrase: ph,
 	};
 }
 
@@ -113,12 +125,13 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 	}
 	const words = buildWordBook(
 		banks.filter((b) => level === "all" || b.level === level),
-		logs,
+		logs as (AnswerLog | GradeLog | WordLog)[],
 	);
+	const phrases = buildPhraseBook(logs);
 	const marked = new Set([...pqs.filter((p) => p.marked).map((p) => p.q.id), ...words.filter((w) => w.reasons.has("marked")).map((w) => wordQid(w.key))]);
 	const answerLogs = logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade");
 	const dicts = dictationItems(pqs.map((x) => ({ q: x.q, bank: x.bank })));
-	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, banks };
+	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, phrases, banks };
 }
 
 /** 這台裝置自己的、還沒批改的翻譯作答（只批改自己的，避免兩台同時批改同一題）。 */
@@ -143,10 +156,11 @@ interface Prefs {
 
 type Phase = "start" | "busy" | "question" | "done";
 
-type SessionType = QType | "word" | "listening";
-const TYPES: SessionType[] = ["word", "vocab", "cloze", "listening", "reading", "translate"];
-const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解" };
+type SessionType = QType | "word" | "listening" | "phrase";
+const TYPES: SessionType[] = ["word", "phrase", "vocab", "cloze", "listening", "reading", "translate"];
+const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解", phrase: "句子" };
 const TYPE_HINT: Record<SessionType, string> = {
+	phrase: "對話中被糾正、問過「怎麼說」的句子：看中文說英文",
 	listening: "聽句子，用中文說出意思（AI 批改或自己判斷）",
 	word: "生字本裡的字：看英文回想中文，再翻面確認",
 	vocab: "看英文選中文（或反過來）",
@@ -303,7 +317,7 @@ export class PracticeView extends ItemView {
 				return;
 			}
 			for (const t of TYPES) {
-				const qs = t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
+				const qs = t === "phrase" ? d.phrases.map(phrasePQ) : t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
 				const info = card.createDiv({ cls: "el-type-info" });
@@ -351,7 +365,7 @@ export class PracticeView extends ItemView {
 		this.gradePendingInBackground(d.logs);
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
-		const pqs = type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
+		const pqs = type === "phrase" ? d.phrases.map(phrasePQ) : type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
 		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
 		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
@@ -381,6 +395,7 @@ export class PracticeView extends ItemView {
 		const srcs: { q: Question; bank: Bank }[] = [];
 		for (const b of banks) for (const q of b.questions) srcs.push({ q, bank: b });
 		const listen = new Map(dictationItems(srcs).map((x) => [x.id, x]));
+		const phraseMap = new Map(buildPhraseBook(logs).map((x) => [phraseQid(x.key), x]));
 		let done = 0;
 		for (const a of pend) {
 			const li = a.qtype === "listening" ? listen.get(a.qid) : undefined;
@@ -395,7 +410,8 @@ export class PracticeView extends ItemView {
 				}
 				continue;
 			}
-			const hit = qmap.get(a.qid);
+			const ph = a.qtype === "phrase" ? phraseMap.get(a.qid) : undefined;
+			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: (this.plugin.user === "kid" ? "kid" : "adult") as Level } : qmap.get(a.qid);
 			if (!hit || !a.text) continue;
 			try {
 				const r = await gradeTranslation(p.backend(), hit.q, a.text, hit.level);
@@ -607,6 +623,85 @@ export class PracticeView extends ItemView {
 		}
 	}
 
+	/** 句子：看中文說（或打）英文 → AI 批改，或翻面自己判斷。 */
+	private drawPhrase(card: HTMLElement, pq: PQ, ph: PhraseItem) {
+		card.createDiv({ cls: "el-muted", text: ph.source === "correction" ? "對話中你想說的話，用英文說說看：" : "你問過的說法，用英文說說看：" });
+		card.createDiv({ cls: "el-qword", text: ph.zh });
+		if (ph.source === "correction" && ph.original) card.createDiv({ cls: "el-muted", text: `（你當時寫的：${ph.original}）` });
+		const ta = card.createEl("textarea", { cls: "el-textarea el-answer", attr: { rows: "3", autocapitalize: "sentences", placeholder: "Type or dictate your English" } });
+		const r2 = card.createDiv({ cls: "el-row el-big-buttons" });
+		const send = r2.createEl("button", { text: "送出批改", cls: "mod-cta" });
+		const flip = r2.createEl("button", { text: "看答案（自己判斷）" });
+		const idk = r2.createEl("button", { text: "我不知道" });
+		const out = card.createDiv();
+		const lock = () => {
+			ta.disabled = send.disabled = flip.disabled = idk.disabled = true;
+		};
+		const reveal = (fb: HTMLElement) => {
+			fb.createDiv({ cls: "el-muted", text: "自然的說法：" });
+			this.wordLine(fb, ph.en, { zh: ph.zh, bank: pq.bank });
+			if (ph.alt) this.wordLine(fb, ph.alt, { zh: ph.zh, bank: pq.bank });
+			if (ph.note) fb.createDiv({ cls: "el-explain", text: ph.note });
+		};
+		send.onclick = async () => {
+			const text = ta.value.trim();
+			if (!text) return new Notice("先打出英文，或按「看答案（自己判斷）」");
+			if (this.answered) return;
+			this.answered = true;
+			lock();
+			send.setText("批改中…");
+			let res: { correct?: boolean; score?: number; feedback?: string; corrected?: string; pending?: boolean };
+			try {
+				if (!navigator.onLine) throw new Error("offline");
+				res = await gradeTranslation(this.plugin.backend(), pq.q as TranslateQ, text, this.plugin.user === "kid" ? "kid" : "adult");
+			} catch (e) {
+				this.plugin.debug(`phrase grade failed: ${(e as Error)?.message ?? e}`);
+				res = { pending: true };
+			}
+			this.record(pq, { ...res, text });
+			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : res.correct ? "is-ok" : "is-bad"}` });
+			fb.createDiv({ cls: "el-verdict", text: res.pending ? "已記錄，之後連上網路會自動批改" : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
+			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
+			if (res.corrected && res.corrected !== text) {
+				fb.createDiv({ cls: "el-muted", text: "修改後：" });
+				this.wordLine(fb, res.corrected, { bank: pq.bank });
+			}
+			reveal(fb);
+			this.nextButton(card);
+		};
+		flip.onclick = () => {
+			if (this.answered) return;
+			lock();
+			const fb = out.createDiv({ cls: "el-feedback" });
+			reveal(fb);
+			fb.createDiv({ cls: "el-muted", text: "你說得出來嗎？" });
+			const r3 = fb.createDiv({ cls: "el-row el-big-buttons" });
+			const opts: [string, { correct: boolean; hint?: boolean }][] = [
+				["會", { correct: true }],
+				["差一點", { correct: true, hint: true }],
+				["不會", { correct: false }],
+			];
+			for (const [label, r] of opts) {
+				const b = r3.createEl("button", { text: label, cls: label === "會" ? "mod-cta" : "" });
+				b.onclick = () => {
+					if (this.answered) return;
+					this.answered = true;
+					r3.querySelectorAll("button").forEach((x) => ((x as HTMLButtonElement).disabled = true));
+					this.record(pq, { ...r, text: "" });
+					this.nextButton(card);
+				};
+			}
+		};
+		idk.onclick = () => {
+			if (this.answered) return;
+			this.answered = true;
+			lock();
+			this.record(pq, { correct: false, dontKnow: true });
+			reveal(out.createDiv({ cls: "el-feedback is-bad" }));
+			this.nextButton(card);
+		};
+	}
+
 	/** 生字複習：看英文回想中文 → 翻面 → 記得／不記得。 */
 	private drawWordCard(card: HTMLElement, pq: PQ, w: WordItem) {
 		const head = card.createDiv({ cls: "el-qword el-line" });
@@ -691,11 +786,11 @@ export class PracticeView extends ItemView {
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
-		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.listening : TYPE_LABEL[q.type] });
+		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.listening : pq.phrase ? LABEL.phrase : TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
-		if (!pq.word && !pq.dict) {
+		if (!pq.word && !pq.dict && !pq.phrase) {
 			const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
 			flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
 		}
@@ -704,6 +799,7 @@ export class PracticeView extends ItemView {
 		const card = el.createDiv({ cls: "el-qcard" });
 		if (pq.word) return this.drawWordCard(card, pq, pq.word);
 		if (pq.dict) return this.drawListening(card, pq, pq.dict);
+		if (pq.phrase) return this.drawPhrase(card, pq, pq.phrase);
 		if (q.type === "translate") return this.drawTranslate(card, pq, q);
 
 		const cq = q as ChoiceQ;
@@ -920,8 +1016,8 @@ export class PracticeView extends ItemView {
 		const p = this.plugin;
 		const extra: Record<string, unknown> = {
 			qid: pq.q.id,
-			bank: pq.word ? WORD_BANK.sourceId : pq.dict ? pq.dict.bank : pq.bank.sourceId,
-			qtype: pq.word ? "word" : pq.dict ? "listening" : pq.q.type,
+			bank: pq.word ? WORD_BANK.sourceId : pq.dict ? pq.dict.bank : pq.phrase ? "phrases" : pq.bank.sourceId,
+			qtype: pq.word ? "word" : pq.dict ? "listening" : pq.phrase ? "phrase" : pq.q.type,
 			session: this.sessionId,
 		};
 		if (r.correct !== undefined) extra.correct = r.correct;
@@ -1020,7 +1116,10 @@ export class PracticeView extends ItemView {
 			for (const r of wrong) {
 				const q = r.pq.q;
 				const li = ul.createEl("li");
-				if (r.pq.dict) {
+				if (r.pq.phrase) {
+					li.createSpan({ text: r.pq.phrase.zh });
+					li.createSpan({ cls: "el-say el-muted", text: `　${r.pq.phrase.en}` });
+				} else if (r.pq.dict) {
 					li.createSpan({ cls: "el-say", text: r.pq.dict.text });
 				} else if (r.pq.word) {
 					li.createSpan({ cls: "el-say", text: r.pq.word.word });

@@ -18,7 +18,7 @@
    1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
    2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0；回報與修正、備份 ← v0.7.x；生字本、點字、統計 ← v0.8.0
    4. 聽力練習：逐字聽寫 v0.9.0 → 改為聽力理解（中文解釋）v0.9.1；預先產生錄音 ← v0.10.0
-   3. 文字對話，錯誤回收進 SRS
+   3. 文字對話，錯誤回收進 SRS ← v0.11.0
    5. 依麥克風測試結果決定語音範圍
    6. 數學模組
 
@@ -65,6 +65,12 @@
 - 句子從題庫推導：vocab context、cloze 完整句、translate reference；小孩 3～14 字、成人 4～25 字；qid "listen:<cyrb53>"、qtype "listening"
 - 播放走發音流程，慢速 0.7 倍；從「下一題」進來時自動播放（仍在點擊事件內）；diffWords 逐字比對保留備用
 
+## 英文對話與句子本（src/chat.ts、src/chatview.ts）
+- AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
+- 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
+- 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
+- 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53）；練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
+
 ## 錄音快取（src/audiocache.ts）
 - 預先產生：每題的單字（含克漏字答案）與句子（原句、完整句、參考譯文）；出題完成後背景跑，啟動 2 分鐘後補齊「自己匯入的題庫」（bank.device），額度用完就停；設定可關閉或手動補齊全部
 - normalizeSpeech 會去掉句首／句尾的 ...，同一句只存一份
@@ -72,7 +78,7 @@
 - 設定顯示錄音總用量與這台裝置的用量
 
 ## 備份（src/backup.ts）
-- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
+- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原目前是手動：從 JSON 的 files 取出內容寫回原路徑
 
 ## 專案慣例
