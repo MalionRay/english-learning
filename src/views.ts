@@ -44,6 +44,10 @@ export class HomeView extends ItemView {
 		el.createDiv({ cls: "el-row" }, (r) => {
 			const pr = r.createEl("button", { text: "開始練習", cls: "mod-cta" });
 			pr.onclick = () => p.openView("english-learning-practice");
+			const ch = r.createEl("button", { text: "英文對話", cls: "mod-cta" });
+			ch.onclick = () => p.openView("english-learning-chat");
+			const pb = r.createEl("button", { text: "句子本" });
+			pb.onclick = () => p.openView("english-learning-phrases");
 			const wb = r.createEl("button", { text: "生字本" });
 			wb.onclick = () => p.openView("english-learning-words");
 			const st = r.createEl("button", { text: "學習統計" });

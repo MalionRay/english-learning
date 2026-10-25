@@ -24,10 +24,17 @@ export interface AIOptions {
 	temperature?: number;
 }
 
+export interface ChatTurn {
+	role: "user" | "model";
+	text: string;
+}
+
 export interface AIBackend {
 	readonly id: string;
 	readonly model: string;
 	complete(prompt: string, opts?: AIOptions): Promise<AIResult>;
+	/** 多輪對話：turns 依時間順序，最後一個應是 user。 */
+	chat(turns: ChatTurn[], opts?: AIOptions): Promise<AIResult>;
 }
 
 export class AIError extends Error {
@@ -42,13 +49,17 @@ export class GeminiBackend implements AIBackend {
 
 	constructor(private apiKey: string, readonly model: string) {}
 
-	async complete(prompt: string, opts: AIOptions = {}): Promise<AIResult> {
+	complete(prompt: string, opts: AIOptions = {}): Promise<AIResult> {
+		return this.chat([{ role: "user", text: prompt }], opts);
+	}
+
+	async chat(turns: ChatTurn[], opts: AIOptions = {}): Promise<AIResult> {
 		const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
 		const generationConfig: Record<string, unknown> = { maxOutputTokens: opts.maxOutputTokens ?? 256 };
 		if (opts.json) generationConfig.responseMimeType = "application/json";
 		if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
 		const body: Record<string, unknown> = {
-			contents: [{ role: "user", parts: [{ text: prompt }] }],
+			contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
 			generationConfig,
 		};
 		if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };

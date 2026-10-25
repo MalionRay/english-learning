@@ -91,3 +91,17 @@
 .el-d-wrong { background: rgba(var(--color-red-rgb), 0.12); border-radius: 3px; padding: 0 2px; }
 .el-d-typed { text-decoration: line-through; color: var(--text-muted); margin-right: 4px; }
 .el-d-extra { text-decoration: line-through; color: var(--text-faint); }
+/* 對話 */
+.el-chat { display: flex; flex-direction: column; height: 100%; }
+.el-chat-list { flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.el-bubble { max-width: 85%; padding: 8px 12px; border-radius: 14px; line-height: 1.5; }
+.el-bubble-user { align-self: flex-end; background: var(--interactive-accent); color: var(--text-on-accent); white-space: pre-wrap; }
+.el-bubble-ai { align-self: flex-start; background: var(--background-secondary); }
+.el-chat-box { align-self: flex-start; max-width: 90%; padding: 6px 10px; border-radius: 8px; font-size: 0.95em; }
+.el-chat-fix { background: rgba(var(--color-yellow-rgb), 0.15); border-left: 3px solid var(--color-yellow); }
+.el-chat-tip { background: rgba(var(--color-blue-rgb), 0.12); border-left: 3px solid var(--color-blue); }
+.el-chat-box-title { font-size: 0.85em; color: var(--text-muted); margin-bottom: 2px; }
+.el-chat-typing { color: var(--text-muted); font-style: italic; }
+.el-chat-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); }
+.el-chat-input textarea { flex: 1; font-size: 1.05em; min-height: 48px; }
+.el-chat-input button { min-height: 44px; padding: 0 18px; }
