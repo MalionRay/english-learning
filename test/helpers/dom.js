@@ -15,6 +15,7 @@ function apply(el, o) {
 	if (o.cls) el.className = Array.isArray(o.cls) ? o.cls.join(" ") : o.cls;
 	if (o.text !== undefined) el.textContent = o.text;
 	if (o.attr) for (const k in o.attr) el.setAttribute(k, o.attr[k]);
+	for (const k of ["type", "value", "placeholder", "href", "title"]) if (o[k] !== undefined) el.setAttribute(k, o[k]);
 	return el;
 }
 P.createEl = function (tag, o, cb) { const e = apply(document.createElement(tag), o); this.appendChild(e); if (cb) cb(e); return e; };

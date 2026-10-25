@@ -6,6 +6,7 @@ import { LEVEL_LABEL, Level, MAX_WORDS, Question, TYPE_LABEL, parseBank, planFor
 import { bankPath, canGenerate, listSources } from "./sources";
 import { FlagLog, loadFlags } from "./flags";
 import { loadFixes } from "./fixes";
+import { OcrResult, imageForAI, mergeOcr, ocrImage } from "./ocr";
 import { TFile } from "obsidian";
 
 // =====================================================================
@@ -139,9 +140,12 @@ export class ImportModal extends Modal {
 	onOpen() {
 		const { contentEl } = this;
 		this.setTitle("匯入文章");
+		let titleEl: HTMLInputElement | null = null;
+		let unknownEl: HTMLInputElement | null = null;
 		new Setting(contentEl).setName("標題").addText((t) => {
 			t.setPlaceholder("例如：BBC - Why we sleep").onChange((v) => (this.title = v));
 			t.inputEl.style.width = "100%";
+			titleEl = t.inputEl;
 		});
 		new Setting(contentEl).setName("程度").addDropdown((d) =>
 			d
@@ -155,7 +159,59 @@ export class ImportModal extends Modal {
 			.addText((t) => {
 				t.setPlaceholder("espionage, lodge a protest").onChange((v) => (this.unknown = v));
 				t.inputEl.style.width = "100%";
+				unknownEl = t.inputEl;
 			});
+
+		// 拍照匯入：iPad／iPhone 可直接拍照或從相簿選，可一次選多頁
+		const photoRow = contentEl.createDiv({ cls: "el-row" });
+		const photoBtn = photoRow.createEl("button", { text: "📷 拍照／選照片" });
+		const photoInfo = photoRow.createSpan({ cls: "el-muted", text: "用 AI 辨識書本或講義上的英文（照片不會存下來）" });
+		const picker = contentEl.createEl("input", { type: "file", attr: { accept: "image/*", multiple: "" } });
+		picker.style.display = "none";
+		photoBtn.onclick = () => picker.click();
+		picker.onchange = async () => {
+			const files = Array.from(picker.files ?? []);
+			picker.value = "";
+			if (!files.length) return;
+			if (typeof navigator !== "undefined" && navigator.onLine === false) {
+				photoInfo.setText("沒有網路連線，拍照辨識需要用 AI。");
+				return;
+			}
+			photoBtn.disabled = true;
+			const results: OcrResult[] = [];
+			try {
+				const ai = this.plugin.backend();
+				for (let i = 0; i < files.length; i++) {
+					photoInfo.setText(`辨識中…（${i + 1}／${files.length}）`);
+					results.push(await ocrImage(ai, await imageForAI(files[i])));
+				}
+			} catch (e) {
+				photoInfo.setText(`辨識失敗：${(e as Error)?.message ?? e}`);
+			} finally {
+				photoBtn.disabled = false;
+			}
+			if (!results.length) return;
+			const r = mergeOcr(results);
+			if (!r.text) {
+				photoInfo.setText("照片裡沒有找到英文文字");
+				return;
+			}
+			ta.value = ta.value.trim() ? `${ta.value.trim()}\n\n${r.text}` : r.text;
+			if (r.title && !this.title.trim() && titleEl) {
+				titleEl.value = r.title;
+				this.title = r.title;
+			}
+			if (r.marked.length && unknownEl) {
+				const have = new Set(this.unknown.split(/[,，、;；\n]/).map((w) => w.trim().toLowerCase()).filter(Boolean));
+				const add = r.marked.filter((w) => !have.has(w.toLowerCase()));
+				if (add.length) {
+					this.unknown = [this.unknown.trim(), ...add].filter(Boolean).join(", ");
+					unknownEl.value = this.unknown;
+				}
+			}
+			update();
+			photoInfo.setText(`已辨識 ${results.length} 張${r.marked.length ? `，找到 ${r.marked.length} 個標記的字` : ""}。請檢查文字有沒有錯再匯入。`);
+		};
 		const info = contentEl.createDiv({ cls: "el-muted" });
 		const ta = contentEl.createEl("textarea", { cls: "el-textarea", attr: { placeholder: "把英文文章貼在這裡", rows: "12" } });
 		const update = () => {

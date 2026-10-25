@@ -22,11 +22,19 @@ export interface AIOptions {
 	json?: boolean;
 	maxOutputTokens?: number;
 	temperature?: number;
+	/** 附加圖片（complete 用；放在提示文字前面）。 */
+	images?: InlineImage[];
+}
+
+export interface InlineImage {
+	mimeType: string;
+	data: string; // base64（不含 data: 前綴）
 }
 
 export interface ChatTurn {
 	role: "user" | "model";
 	text: string;
+	images?: InlineImage[];
 }
 
 export interface AIBackend {
@@ -88,7 +96,7 @@ export class GeminiBackend implements AIBackend {
 	constructor(private apiKey: string, readonly model: string) {}
 
 	complete(prompt: string, opts: AIOptions = {}): Promise<AIResult> {
-		return this.chat([{ role: "user", text: prompt }], opts);
+		return this.chat([{ role: "user", text: prompt, images: opts.images }], opts);
 	}
 
 	async chat(turns: ChatTurn[], opts: AIOptions = {}): Promise<AIResult> {
@@ -97,7 +105,10 @@ export class GeminiBackend implements AIBackend {
 		if (opts.json) generationConfig.responseMimeType = "application/json";
 		if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
 		const body: Record<string, unknown> = {
-			contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
+			contents: turns.map((t) => ({
+				role: t.role,
+				parts: [...(t.images ?? []).map((i) => ({ inlineData: { mimeType: i.mimeType, data: i.data } })), { text: t.text }],
+			})),
 			generationConfig,
 		};
 		if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };

@@ -6,6 +6,7 @@ import { loadPractice } from "./practice";
 import { computeStats, wordQid } from "./words";
 import { phraseQid } from "./chat";
 import type { AnswerLog, GradeLog } from "./srs";
+import { PatternModal } from "./patternview";
 
 export const WORDS_VIEW = "english-learning-words";
 export const STATS_VIEW = "english-learning-stats";
@@ -86,7 +87,7 @@ export class WordsView extends ItemView {
 		const draw = () => {
 			list.empty();
 			const f = this.filter.trim().toLowerCase();
-			const shown = words.filter((w) => !f || w.key.includes(f) || (w.meaning ?? "").includes(f));
+			const shown = words.filter((w) => !f || w.key.includes(f) || [...w.forms].some((x) => x.toLowerCase().includes(f)) || (w.meaning ?? "").includes(f));
 			if (!shown.length) list.createDiv({ cls: "el-muted", text: words.length ? "沒有符合的字" : "還沒有生字。練習時點句子裡的字可以加入。" });
 			for (const w of shown) {
 				const st = d.states.get(wordQid(w.key));
@@ -95,6 +96,7 @@ export class WordsView extends ItemView {
 				top.createSpan({ cls: "el-say el-title", text: w.word });
 				if (w.ipa) top.createSpan({ cls: "el-ipa", text: w.ipa });
 				top.createSpan({ text: w.meaning ?? "" });
+				if (w.forms.size) card.createDiv({ cls: "el-muted", text: `也包含：${[...w.forms].join("、")}` });
 				if (w.context) card.createDiv({ cls: "el-say el-sentence el-muted", text: w.context });
 				const tags: string[] = [];
 				if (w.reasons.has("marked")) tags.push("⭐標記");
@@ -171,6 +173,12 @@ export class StatsView extends ItemView {
 		tile("學習中", `${s.learning}`, `明天前到期 ${s.dueTomorrow}`);
 		tile("生字本", `${d.words.length}`);
 		tile("句子本", `${d.phrases.length}`);
+
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "分析我的常見錯誤", cls: "mod-cta" });
+			b.onclick = () => new PatternModal(this.app, p).open();
+			r.createSpan({ cls: "el-muted", text: "用 AI 找出最近 60 天反覆犯的錯，並產生練習句" });
+		});
 
 		el.createEl("h4", { text: "最近 30 天" });
 		const max = Math.max(1, ...s.days.map((x) => x.count));
@@ -262,7 +270,7 @@ export class PhrasesView extends ItemView {
 				if (x.source === "correction" && x.original) card.createDiv({ cls: "el-d-typed", text: x.original });
 				if (x.note) card.createDiv({ cls: "el-muted", text: x.note });
 				const bottom = card.createDiv({ cls: "el-row" });
-				bottom.createSpan({ cls: "el-muted", text: `${x.source === "correction" ? "被糾正" : "問過怎麼說"}・${st ? `下次複習：${relDay(st.due)}` : "還沒複習過"}` });
+				bottom.createSpan({ cls: "el-muted", text: `${x.source === "correction" ? "被糾正" : x.source === "pattern" ? "常見錯誤練習" : "問過怎麼說"}・${st ? `下次複習：${relDay(st.due)}` : "還沒複習過"}` });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
 				rm.onclick = async () => {
 					await p.appendLog(p.makeEntry("phrase-remove", { key: x.key }));
