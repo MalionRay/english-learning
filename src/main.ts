@@ -18,7 +18,9 @@ import { bankPath, generateForSource, importArticle, resetSource, waitForStatus 
 import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
-import { PRACTICE_VIEW, PracticeView } from "./practice";
+import { PRACTICE_VIEW, PracticeView, loadBanks, loadPractice } from "./practice";
+import { CleanupPlan, PrefetchResult, audioTextsOfBanks, formatBytes, planCleanup, prefetchAudio } from "./audiocache";
+import { parseBank } from "./generate";
 import { STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
 import { cachedZh, translateMany } from "./translate";
 import { backupNow, maybeAutoBackup } from "./backup";
@@ -36,6 +38,7 @@ export default class EnglishLearningPlugin extends Plugin {
 	writer!: AppendOnlyWriter;
 	/** 這台裝置正在出題的文章路徑 */
 	generating = new Set<string>();
+	private prefetching = false;
 	pronouncer!: Pronouncer;
 	/** 最後一次 Vault 檔案變動的時間（判斷同步是否結束的備案） */
 	private lastVaultEvent = 0;
@@ -76,6 +79,17 @@ export default class EnglishLearningPlugin extends Plugin {
 			this.register(() => window.clearTimeout(t));
 		});
 		this.addCommand({ id: "backup", name: "立即備份", callback: () => this.backup() });
+
+		// 啟動 2 分鐘後，補齊「自己匯入的題庫」還沒有的錄音（額度用完就留到明天）
+		this.app.workspace.onLayoutReady(() => {
+			const t = window.setTimeout(async () => {
+				if (!this.settings.prefetchAudio) return;
+				const mine = (await loadBanks(this.app)).filter((b) => b.device === this.deviceId);
+				if (mine.length) this.prefetch(mine, false);
+			}, 120_000);
+			this.register(() => window.clearTimeout(t));
+		});
+		this.addCommand({ id: "prefetch-all", name: "補齊所有題庫的錄音", callback: () => this.prefetchAll() });
 
 		const touch = () => (this.lastVaultEvent = Date.now());
 		this.registerEvent(this.app.vault.on("create", touch));
@@ -271,6 +285,11 @@ export default class EnglishLearningPlugin extends Plugin {
 			new Notice(msg, 8000);
 			this.debug(`generate ${file.path}: ${msg}`);
 			if (this.settings.syncAfterGenerate) await this.triggerSync(true);
+			// 背景預先產生這篇的錄音
+			if (this.settings.prefetchAudio) {
+				const bank = parseBank(await this.app.vault.read(r.bankFile));
+				if (bank) this.prefetch([bank], true);
+			}
 		} catch (e) {
 			await this.writeEntry(this.entry("api", { ok: false, purpose: "generate", source: file.path, backend: ai.id, model: ai.model, status: e instanceof AIError ? e.status : undefined, error: errMsg(e) })).catch(() => undefined);
 			this.fail("出題", e);
@@ -424,6 +443,67 @@ export default class EnglishLearningPlugin extends Plugin {
 		}
 		this.debug(`syncAndWait done in ${secs()}s (quiet heuristic)`);
 		return true;
+	}
+
+	/** 預先產生錄音（同一時間只跑一個）。完成後若有新錄音就同步。 */
+	async prefetch(banks: Bank[], notify: boolean): Promise<PrefetchResult | null> {
+		if (this.prefetching) {
+			if (notify) new Notice("正在產生錄音中，請稍候");
+			return null;
+		}
+		this.prefetching = true;
+		const n = notify ? new Notice("預先產生錄音中…", 0) : null;
+		try {
+			const r = await prefetchAudio(this.pronouncer, audioTextsOfBanks(banks), (done, total) => n?.setMessage(`預先產生錄音中…（${done}/${total}）`));
+			this.debug(`prefetch: total ${r.total}, already ${r.already}, made ${r.made}${r.stoppedByQuota ? ", stopped by quota" : ""}`);
+			if (notify) {
+				const left = r.total - r.already - r.made;
+				new Notice(
+					`錄音：新產生 ${r.made} 段，已存在 ${r.already} 段${left > 0 ? `，還差 ${left} 段${r.stoppedByQuota ? "（今天的語音額度用完，明天會自動補）" : "（之後再補）"}` : ""}`,
+					8000,
+				);
+			}
+			if (r.made && this.settings.syncAfterGenerate) this.triggerSync(true);
+			return r;
+		} catch (e) {
+			this.debug(`prefetch failed: ${errMsg(e)}`);
+			return null;
+		} finally {
+			n?.hide();
+			this.prefetching = false;
+		}
+	}
+
+	async prefetchAll() {
+		await this.prefetch(await loadBanks(this.app), true);
+	}
+
+	/** 找出可清除的錄音（已熟練、或不再使用）。 */
+	async planAudioCleanup(): Promise<CleanupPlan> {
+		const banks = await loadBanks(this.app);
+		const states = [];
+		const words: string[] = [];
+		for (const u of this.settings.users) {
+			const d = await loadPractice(this.app, u, "all");
+			states.push(d.states);
+			for (const w of d.words) if (w.reasons.has("manual")) words.push(w.word);
+		}
+		return planCleanup(this.app, banks, states, words);
+	}
+
+	async runAudioCleanup(plan: CleanupPlan): Promise<void> {
+		let n = 0;
+		for (const f of plan.files) {
+			try {
+				await this.app.vault.delete(f);
+				this.pronouncer.onDelete(f);
+				n++;
+			} catch (e) {
+				this.debug(`delete audio failed ${f.path}: ${errMsg(e)}`);
+			}
+		}
+		new Notice(`已清除 ${n} 個錄音檔（${formatBytes(plan.bytes)}）`);
+		this.debug(`audio cleanup: ${n} files, ${plan.bytes} bytes`);
 	}
 
 	/** 加入生字本（寫在目前使用者的 log）。有網路時順便查好中文。 */

@@ -1,11 +1,13 @@
 import * as obsidian from "obsidian";
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, LS_TTS_VOICE, defaultVoice, englishVoices, getRate } from "./tts";
 import { loadQuota } from "./pronounce";
 import { LS_LAST_BACKUP } from "./backup";
+import { audioUsage, formatBytes } from "./audiocache";
+import { ConfirmModal } from "./views";
 
 export class ELSettingTab extends PluginSettingTab {
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
@@ -61,6 +63,40 @@ export class ELSettingTab extends PluginSettingTab {
 				`每 7 天自動把答題紀錄、文章與題庫備份到 backup/${p.deviceId}/，保留最近 4 份。上次備份：${typeof lastBackup === "string" ? new Date(lastBackup).toLocaleString() : "還沒有"}`,
 			)
 			.addButton((b) => b.setButtonText("立即備份").onClick(() => p.backup().then(() => this.display())));
+
+		containerEl.createEl("h3", { text: "錄音" });
+		const u = audioUsage(this.app, p.deviceId);
+		new Setting(containerEl)
+			.setName("錄音佔用空間")
+			.setDesc(`全部 ${u.files} 個檔案、${formatBytes(u.bytes)}（這台裝置產生的 ${u.mineFiles} 個、${formatBytes(u.mineBytes)}）。Dropbox 免費版 2GB，一篇文章約 2～3MB。`);
+		new Setting(containerEl)
+			.setName("出題後預先產生錄音")
+			.setDesc("出題完成後在背景產生單字與句子的錄音，離線練習也是自然的聲音。只補自己匯入的題庫；語音額度用完就留到明天。")
+			.addToggle((t) =>
+				t.setValue(p.settings.prefetchAudio).onChange(async (v) => {
+					p.settings.prefetchAudio = v;
+					await p.saveSettings();
+				}),
+			);
+		new Setting(containerEl)
+			.setName("補齊所有題庫的錄音")
+			.setDesc("現在就為所有題庫產生缺少的錄音（會用掉語音額度）。")
+			.addButton((b) => b.setButtonText("開始").onClick(() => p.prefetchAll().then(() => this.display())));
+		new Setting(containerEl)
+			.setName("清除已熟練與不再使用的錄音")
+			.setDesc("已熟練（間隔 7 天以上）的題目、以及不屬於任何題庫或生字本的錄音會被刪除；之後需要時會重新產生。")
+			.addButton((b) =>
+				b.setButtonText("檢查").onClick(async () => {
+					const plan = await p.planAudioCleanup();
+					if (!plan.files.length) return new Notice("目前沒有可以清除的錄音");
+					new ConfirmModal(
+						this.app,
+						"清除錄音",
+						`可以清除 ${plan.files.length} 個檔案（${formatBytes(plan.bytes)}）：已熟練 ${plan.mastered} 個、不再使用 ${plan.unused} 個。所有裝置同步後都會刪除，之後需要時會重新產生。`,
+						() => p.runAudioCleanup(plan).then(() => this.display()),
+					).open();
+				}),
+			);
 
 		containerEl.createEl("h3", { text: "發音" });
 		containerEl.createEl("p", {

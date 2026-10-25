@@ -39,7 +39,13 @@ function cyrb53(str: string, seed = 0): string {
 }
 
 export function normalizeSpeech(text: string): string {
-	return text.replace(/[​-‍⁠﻿]/g, "").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+	return text
+		.replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+		.replace(/[’‘]/g, "'")
+		.replace(/^\s*(\.\.\.|…)\s*/, "") // 題庫原句常以 ... 開頭或結尾，唸的時候一樣
+		.replace(/\s*(\.\.\.|…)\s*$/, "")
+		.replace(/\s+/g, " ")
+		.trim();
 }
 
 export function audioKey(text: string): string {
@@ -327,6 +333,57 @@ export class Pronouncer {
 		// 4. 系統語音
 		await this.d.systemSpeak(text, opts.rate);
 		return "system";
+	}
+
+	/**
+	 * 預先產生用：確保這段文字有錄音（不播放、不用系統語音）。
+	 * 回傳 "cache"（已存在）、"dict"、"gemini"、"quota"（額度或上限用完）或 "none"（無法取得）。
+	 */
+	async ensure(text: string): Promise<"cache" | "dict" | "gemini" | "quota" | "none"> {
+		const t = normalizeSpeech(text);
+		if (!t) return "none";
+		const key = audioKey(t);
+		if (this.index.has(key)) return "cache";
+		const s = this.d.settings();
+		if (s.dictAudio && isSingleWord(t) && !this.dictMissed(t) && Date.now() > this.dictDownUntil) {
+			try {
+				const got = await this.fetchDict(t);
+				if (got) {
+					await this.save(key, "mp3", got);
+					this.d.log("dict", { text: t, prefetch: true });
+					return "dict";
+				}
+				this.markDictMiss(t);
+			} catch (e) {
+				this.dictDownUntil = Date.now() + 3600_000;
+				this.d.debug(`prefetch dict failed ${t}: ${(e as Error)?.message ?? e}`);
+			}
+		}
+		if (!s.geminiTts) return "none";
+		const q = loadQuota(this.d.app);
+		if (q.exhausted || q.count >= s.ttsDailyCap) return "quota";
+		try {
+			const wav = await this.fetchGemini(t, s);
+			const q2 = loadQuota(this.d.app);
+			q2.count++;
+			saveQuota(this.d.app, q2);
+			await this.save(key, "wav", wav);
+			this.d.log("gemini", { text: t.slice(0, 200), prefetch: true, bytes: wav.byteLength, todayCount: q2.count });
+			return "gemini";
+		} catch (e) {
+			if (e instanceof AIError && e.status === 429) {
+				const q3 = loadQuota(this.d.app);
+				q3.exhausted = true;
+				saveQuota(this.d.app, q3);
+				return "quota";
+			}
+			this.d.debug(`prefetch gemini failed: ${(e as Error)?.message ?? e}`);
+			return "none";
+		}
+	}
+
+	has(text: string): boolean {
+		return this.index.has(audioKey(normalizeSpeech(text)));
 	}
 
 	private quotaOk(s: PronounceSettings): boolean {
