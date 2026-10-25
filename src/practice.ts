@@ -3,14 +3,14 @@ import { App, ItemView, Modal, Notice, Setting, TFile, WorkspaceLeaf } from "obs
 import { FLAG_REASONS, loadFlags } from "./flags";
 import { loadFixes, resolveQuestion } from "./fixes";
 import { WordItem, WordLog, buildWordBook, wordKey, wordQid } from "./words";
-import { DICT_PASS, DictItem, diffWords, dictationItems } from "./dictation";
+import { DictItem, dictationItems } from "./dictation";
 import { Menu } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
 import { AnswerLog, GradeLog, QState, computeStates, pickSession } from "./srs";
-import { gradeTranslation } from "./grade";
+import { gradeListening, gradeTranslation } from "./grade";
 import { cachedZh, translateMany } from "./translate";
 
 export const PRACTICE_VIEW = "english-learning-practice";
@@ -143,11 +143,11 @@ interface Prefs {
 
 type Phase = "start" | "busy" | "question" | "done";
 
-type SessionType = QType | "word" | "dictation";
-const TYPES: SessionType[] = ["word", "vocab", "cloze", "dictation", "reading", "translate"];
-const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", dictation: "聽寫" };
+type SessionType = QType | "word" | "listening";
+const TYPES: SessionType[] = ["word", "vocab", "cloze", "listening", "reading", "translate"];
+const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解" };
 const TYPE_HINT: Record<SessionType, string> = {
-	dictation: "聽句子，打出聽到的內容（可重播、慢速）",
+	listening: "聽句子，用中文說出意思（AI 批改或自己判斷）",
 	word: "生字本裡的字：看英文回想中文，再翻面確認",
 	vocab: "看英文選中文（或反過來）",
 	cloze: "句子挖空，自己打出那個字",
@@ -303,7 +303,7 @@ export class PracticeView extends ItemView {
 				return;
 			}
 			for (const t of TYPES) {
-				const qs = t === "word" ? d.words.map(wordPQ) : t === "dictation" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
+				const qs = t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
 				const info = card.createDiv({ cls: "el-type-info" });
@@ -315,7 +315,7 @@ export class PracticeView extends ItemView {
 				b.onclick = () => this.start(t);
 			}
 			const pend = pendingAnswers(d.logs, p.deviceId).length;
-			if (pend) list.createDiv({ cls: "el-muted", text: `${pend} 題翻譯等待批改（連上網路開始練習時會自動批改）` });
+			if (pend) list.createDiv({ cls: "el-muted", text: `${pend} 題作答等待批改（連上網路開始練習時會自動批改）` });
 		} catch (e) {
 			list.empty();
 			list.createDiv({ cls: "el-warn", text: `讀取失敗：${(e as Error)?.message ?? e}` });
@@ -351,7 +351,7 @@ export class PracticeView extends ItemView {
 		this.gradePendingInBackground(d.logs);
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
-		const pqs = type === "word" ? d.words.map(wordPQ) : type === "dictation" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
+		const pqs = type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
 		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
 		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
@@ -378,8 +378,23 @@ export class PracticeView extends ItemView {
 		const banks = await loadBanks(this.app);
 		const qmap = new Map<string, { q: TranslateQ; level: Level }>();
 		for (const b of banks) for (const q of b.questions) if (q.type === "translate") qmap.set(q.id, { q, level: b.level });
+		const srcs: { q: Question; bank: Bank }[] = [];
+		for (const b of banks) for (const q of b.questions) srcs.push({ q, bank: b });
+		const listen = new Map(dictationItems(srcs).map((x) => [x.id, x]));
 		let done = 0;
 		for (const a of pend) {
+			const li = a.qtype === "listening" ? listen.get(a.qid) : undefined;
+			if (li && a.text) {
+				try {
+					const g = await gradeListening(p.backend(), li.text, li.zh, a.text, li.level);
+					await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: g.score, correct: g.correct, feedback: g.feedback }));
+					done++;
+				} catch (e) {
+					p.debug(`grade pending failed: ${(e as Error)?.message ?? e}`);
+					break;
+				}
+				continue;
+			}
 			const hit = qmap.get(a.qid);
 			if (!hit || !a.text) continue;
 			try {
@@ -391,7 +406,7 @@ export class PracticeView extends ItemView {
 				break; // 多半是離線或額度問題，下次再試
 			}
 		}
-		if (done) new Notice(`已批改 ${done} 題之前離線時的翻譯`);
+		if (done) new Notice(`已批改 ${done} 題之前離線時的作答`);
 	}
 
 	// ---- 中文翻譯按鈕 ----
@@ -493,9 +508,9 @@ export class PracticeView extends ItemView {
 		menu.showAtMouseEvent(evt);
 	}
 
-	/** 聽寫：播放（可重播、慢速）→ 打出聽到的句子 → 逐字比對。 */
-	private drawDictation(card: HTMLElement, pq: PQ, d: DictItem) {
-		card.createDiv({ cls: "el-muted", text: "聽句子，打出你聽到的內容。大小寫和標點不算錯。" });
+	/** 聽力理解：播放（可重播、慢速）→ 用中文寫下意思給 AI 批改，或直接翻面自己判斷。 */
+	private drawListening(card: HTMLElement, pq: PQ, d: DictItem) {
+		card.createDiv({ cls: "el-muted", text: "聽句子，用中文寫出（或用鍵盤麥克風說出）它的意思。不想寫的話，可以直接翻面自己判斷。" });
 		const row = card.createDiv({ cls: "el-row el-big-buttons" });
 		const play = row.createEl("button", { text: "▶ 播放", cls: "mod-cta" });
 		const slow = row.createEl("button", { text: "🐢 慢速" });
@@ -508,47 +523,83 @@ export class PracticeView extends ItemView {
 			plays++;
 			this.plugin.say(d.text, 0.7);
 		};
-		const ta = card.createEl("textarea", {
-			cls: "el-textarea el-answer",
-			attr: { rows: "3", autocapitalize: "off", autocorrect: "off", spellcheck: "false", placeholder: "打出聽到的句子" },
-		});
+		const ta = card.createEl("textarea", { cls: "el-textarea el-answer", attr: { rows: "3", placeholder: "用中文寫下你聽到的意思" } });
 		const r2 = card.createDiv({ cls: "el-row el-big-buttons" });
-		const send = r2.createEl("button", { text: "送出", cls: "mod-cta" });
+		const send = r2.createEl("button", { text: "送出批改", cls: "mod-cta" });
+		const flip = r2.createEl("button", { text: "看答案（自己判斷）" });
 		const idk = r2.createEl("button", { text: "我不知道" });
 		const out = card.createDiv();
+		const lock = () => {
+			ta.disabled = send.disabled = flip.disabled = idk.disabled = true;
+		};
+		const reveal = (fb: HTMLElement) => {
+			fb.createDiv({ cls: "el-muted", text: `原句（播放 ${plays} 次）：` });
+			this.wordLine(fb, d.text, { zh: d.zh, bank: pq.bank });
+			const zhEl = fb.createDiv({ cls: "el-explain", text: d.zh ? `意思：${d.zh}` : "意思：翻譯中…" });
+			if (!d.zh)
+				this.zhFor([d.text])
+					.then((z) => zhEl.setText(`意思：${z[0]}`))
+					.catch(() => zhEl.setText("意思：（需要網路才能翻譯，可按句子旁的「中」再試）"));
+		};
 
-		const done = (typed: string, dontKnow: boolean) => {
+		send.onclick = async () => {
+			const text = ta.value.trim();
+			if (!text) return new Notice("先寫下意思，或按「看答案（自己判斷）」");
 			if (this.answered) return;
 			this.answered = true;
-			ta.disabled = send.disabled = idk.disabled = true;
-			const { parts, score } = diffWords(d.text, typed);
-			const correct = !dontKnow && score >= DICT_PASS;
-			this.record(pq, { correct, text: typed, score: Math.round(score * 100), dontKnow });
-			const fb = out.createDiv({ cls: `el-feedback ${correct ? "is-ok" : "is-bad"}` });
-			fb.createDiv({ cls: "el-verdict", text: dontKnow ? "原句" : `${correct ? "✓" : "✗"} ${Math.round(score * 100)}%（${plays} 次播放）` });
-			if (!dontKnow) {
-				const diff = fb.createDiv({ cls: "el-diff" });
-				for (const p of parts) {
-					if (p.kind === "ok") diff.createSpan({ cls: "el-d-ok", text: p.expected });
-					else if (p.kind === "missing") diff.createSpan({ cls: "el-d-miss", text: p.expected });
-					else if (p.kind === "wrong") {
-						const w = diff.createSpan({ cls: "el-d-wrong" });
-						w.createSpan({ cls: "el-d-typed", text: p.typed });
-						w.createSpan({ text: p.expected });
-					} else diff.createSpan({ cls: "el-d-extra", text: p.typed });
-					if (!(p.expected ?? "").endsWith("-")) diff.appendChild(document.createTextNode(" "));
-				}
-				fb.createDiv({ cls: "el-muted", text: "綠色：對　紅底：漏掉　刪除線：你寫的（後面是正確的）　灰色刪除線：多寫的" });
+			lock();
+			send.setText("批改中…");
+			let res: { correct?: boolean; score?: number; feedback?: string; pending?: boolean };
+			try {
+				if (!navigator.onLine) throw new Error("offline");
+				const g = await gradeListening(this.plugin.backend(), d.text, d.zh, text, d.level);
+				res = { correct: g.correct, score: g.score, feedback: g.feedback };
+			} catch (e) {
+				this.plugin.debug(`listening grade failed: ${(e as Error)?.message ?? e}`);
+				res = { pending: true };
 			}
-			this.wordLine(fb, d.text, { zh: d.zh, bank: pq.bank });
+			this.record(pq, { ...res, text });
+			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : res.correct ? "is-ok" : "is-bad"}` });
+			fb.createDiv({ cls: "el-verdict", text: res.pending ? "已記錄，之後連上網路會自動批改" : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
+			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
+			reveal(fb);
 			this.nextButton(card);
 		};
-		send.onclick = () => {
-			const typed = ta.value.trim();
-			if (!typed) return new Notice("先打出聽到的句子，或按「我不知道」");
-			done(typed, false);
+
+		flip.onclick = () => {
+			if (this.answered) return;
+			lock();
+			const fb = out.createDiv({ cls: "el-feedback" });
+			reveal(fb);
+			fb.createDiv({ cls: "el-muted", text: "你聽懂了嗎？" });
+			const r3 = fb.createDiv({ cls: "el-row el-big-buttons" });
+			const opts: [string, { correct: boolean; hint?: boolean }][] = [
+				["聽懂", { correct: true }],
+				["部分懂", { correct: true, hint: true }], // 不拉長間隔、明天再聽
+				["沒聽懂", { correct: false }],
+			];
+			for (const [label, r] of opts) {
+				const b = r3.createEl("button", { text: label, cls: label === "聽懂" ? "mod-cta" : "" });
+				b.onclick = () => {
+					if (this.answered) return;
+					this.answered = true;
+					r3.querySelectorAll("button").forEach((x) => ((x as HTMLButtonElement).disabled = true));
+					this.record(pq, { ...r, text: "" });
+					this.nextButton(card);
+				};
+			}
 		};
-		idk.onclick = () => done("", true);
+
+		idk.onclick = () => {
+			if (this.answered) return;
+			this.answered = true;
+			lock();
+			this.record(pq, { correct: false, dontKnow: true });
+			const fb = out.createDiv({ cls: "el-feedback is-bad" });
+			reveal(fb);
+			this.nextButton(card);
+		};
+
 		// 從「下一題」按鈕進來時，這裡仍在使用者點擊的事件中，可以直接播放
 		if (this.idx > 0) {
 			plays++;
@@ -640,7 +691,7 @@ export class PracticeView extends ItemView {
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
-		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.dictation : TYPE_LABEL[q.type] });
+		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.listening : TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
@@ -652,7 +703,7 @@ export class PracticeView extends ItemView {
 
 		const card = el.createDiv({ cls: "el-qcard" });
 		if (pq.word) return this.drawWordCard(card, pq, pq.word);
-		if (pq.dict) return this.drawDictation(card, pq, pq.dict);
+		if (pq.dict) return this.drawListening(card, pq, pq.dict);
 		if (q.type === "translate") return this.drawTranslate(card, pq, q);
 
 		const cq = q as ChoiceQ;
@@ -870,7 +921,7 @@ export class PracticeView extends ItemView {
 		const extra: Record<string, unknown> = {
 			qid: pq.q.id,
 			bank: pq.word ? WORD_BANK.sourceId : pq.dict ? pq.dict.bank : pq.bank.sourceId,
-			qtype: pq.word ? "word" : pq.dict ? "dictation" : pq.q.type,
+			qtype: pq.word ? "word" : pq.dict ? "listening" : pq.q.type,
 			session: this.sessionId,
 		};
 		if (r.correct !== undefined) extra.correct = r.correct;

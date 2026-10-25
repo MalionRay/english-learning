@@ -43,3 +43,32 @@ Learner's translation: ${answer.trim()}`;
 		corrected: typeof j.corrected === "string" ? j.corrected.trim() : "",
 	};
 }
+
+// ---------------------------------------------------------------------
+// 聽力理解：聽英文句子，用中文說出意思
+
+export interface ListenGrade {
+	score: number;
+	correct: boolean;
+	feedback: string; // 繁中：聽懂了什麼、漏了什麼
+}
+
+export async function gradeListening(ai: AIBackend, english: string, zhRef: string | undefined, answer: string, level: Level): Promise<ListenGrade> {
+	const system = `You check whether a Taiwanese learner understood an English sentence they HEARD, based on their explanation in Chinese.
+Learner level: ${level === "kid" ? "primary-school child; be encouraging and lenient" : "adult"}.
+Judge meaning only: the main idea, who did what, and key details. Wording, grammar and minor omissions of unimportant details do not matter.
+Score 0-100: 90+ fully understood; 70-89 main idea right with small gaps; below 70 the main idea is wrong or missing.
+Return ONLY JSON {"score": <integer>, "feedback": "<繁體中文（台灣用語）1–2 句：聽懂的部分、漏掉或誤解的部分>"}`;
+	const prompt = `English sentence: ${english}
+${zhRef ? `Reference Chinese meaning: ${zhRef}\n` : ""}Learner's explanation: ${answer.trim()}`;
+	const res = await ai.complete(prompt, { system, json: true, maxOutputTokens: 400, temperature: 0.2 });
+	let j: { score?: unknown; feedback?: unknown };
+	try {
+		j = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+	} catch {
+		throw new Error("批改結果不是有效的 JSON");
+	}
+	const score = Math.max(0, Math.min(100, Math.round(Number(j.score))));
+	if (!Number.isFinite(score)) throw new Error("批改結果沒有分數");
+	return { score, correct: score >= PASS, feedback: typeof j.feedback === "string" ? j.feedback.trim() : "" };
+}

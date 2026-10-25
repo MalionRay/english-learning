@@ -1,8 +1,8 @@
-// 聽寫：從題庫裡的英文句子產生聽寫項目，並逐字比對作答。不碰 Vault，方便測試。
+// 聽力理解（原聽寫）：從題庫裡的英文句子產生聽力項目。逐字比對（diffWords）保留備用。不碰 Vault，方便測試。
 import type { Bank, ChoiceQ, Question } from "./generate";
 import { audioKey } from "./pronounce";
 
-export const DICT_PREFIX = "dict:";
+export const DICT_PREFIX = "listen:";
 export const DICT_PASS = 0.9;
 
 export interface DictItem {

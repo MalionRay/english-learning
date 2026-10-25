@@ -17,7 +17,7 @@
 2. 正式功能：
    1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
    2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0；回報與修正、備份 ← v0.7.x；生字本、點字、統計 ← v0.8.0
-   4. 鍵盤聽寫（聽寫練習）← v0.9.0
+   4. 聽力練習：逐字聽寫 v0.9.0 → 改為聽力理解（中文解釋）v0.9.1
    3. 文字對話，錯誤回收進 SRS
    5. 依麥克風測試結果決定語音範圍
    6. 數學模組
@@ -60,10 +60,10 @@
 - 練習畫面的英文句子逐字可點（Menu：唸、看中文、加入生字本）；作答前看中文算 hint
 - 統計：連續天數、今日題數、30 天長條圖、各題型正確率（30 天）、已熟練（step ≥ 3）
 
-## 聽寫（src/dictation.ts）
-- 句子從題庫推導：vocab context、cloze 完整句、translate reference；小孩 3～14 字、成人 4～25 字；qid "dict:<cyrb53>"、qtype "dictation"
-- 比對：小寫、去標點、連字號當分隔、忽略撇號；LCS 逐字 diff；正確率 ≥ 90% 算答對（多寫的字扣半個）
-- 播放走發音流程（已存錄音 → Gemini → 系統語音），慢速 0.7 倍；從「下一題」進來時自動播放（仍在點擊事件內）
+## 聽力理解（src/dictation.ts、src/grade.ts 的 gradeListening）
+- v0.9.1 起取代逐字聽寫：聽句子，用中文寫出意思由 AI 批改（≥ 70 分算懂；離線 pending，之後由同一裝置補批），或翻面自己判斷（聽懂／部分懂＝hint／沒聽懂）
+- 句子從題庫推導：vocab context、cloze 完整句、translate reference；小孩 3～14 字、成人 4～25 字；qid "listen:<cyrb53>"、qtype "listening"
+- 播放走發音流程，慢速 0.7 倍；從「下一題」進來時自動播放（仍在點擊事件內）；diffWords 逐字比對保留備用
 
 ## 備份（src/backup.ts）
 - 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
