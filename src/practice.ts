@@ -221,10 +221,15 @@ export class PracticeView extends ItemView {
 				this.drawStart();
 			};
 			r.createSpan({ text: "題數" });
-			const size = r.createEl("select", { cls: "dropdown" });
-			for (const n of [10, 20, 30]) size.createEl("option", { text: String(n), value: String(n) });
+			const size = r.createEl("input", { cls: "el-size-input", attr: { type: "number", min: "1", max: "200", step: "1", inputmode: "numeric" } });
 			size.value = String(prefs.size);
-			size.onchange = () => this.savePrefs({ ...this.prefs(), size: Number(size.value) });
+			const saveSize = () => {
+				const n = Math.max(1, Math.min(200, Math.floor(Number(size.value)) || 20));
+				size.value = String(n);
+				this.savePrefs({ ...this.prefs(), size: n });
+			};
+			size.onchange = saveSize;
+			size.onblur = saveSize;
 		});
 		el.createDiv({ cls: "el-row" }, (r) => {
 			const cb = r.createEl("input", { attr: { type: "checkbox", id: "el-sync-first" } });

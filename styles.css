@@ -61,3 +61,4 @@
 .el-para { margin: 8px 0; line-height: 1.5; }
 .el-hints { margin: 4px 0; }
 .el-practice input.el-cloze-input { width: 100%; font-size: 1.2em; padding: 10px 12px; height: auto; margin: 10px 0 4px; }
+.el-practice input.el-size-input { width: 5em; }
