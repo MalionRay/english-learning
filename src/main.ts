@@ -19,6 +19,8 @@ import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
 import { PRACTICE_VIEW, PracticeView } from "./practice";
+import { STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
+import { cachedZh, translateMany } from "./translate";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
@@ -82,6 +84,10 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.registerEvent(this.app.vault.on("rename", touch));
 
 		this.registerView(PRACTICE_VIEW, (leaf) => new PracticeView(leaf, this));
+		this.registerView(WORDS_VIEW, (leaf) => new WordsView(leaf, this));
+		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
+		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
+		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
 		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
 		this.registerView(HOME_VIEW, (leaf) => new HomeView(leaf, this));
@@ -420,6 +426,24 @@ export default class EnglishLearningPlugin extends Plugin {
 		return true;
 	}
 
+	/** 加入生字本（寫在目前使用者的 log）。有網路時順便查好中文。 */
+	async addWord(word: string, context?: string, bank?: string): Promise<void> {
+		let meaning = cachedZh(this.app, word);
+		if (!meaning && navigator.onLine !== false) {
+			try {
+				meaning = (await translateMany(this.app, this.backend(), [word]))[0];
+			} catch {
+				/* 之後複習時再查 */
+			}
+		}
+		const extra: Record<string, unknown> = { word };
+		if (meaning) extra.meaning = meaning;
+		if (context) extra.context = context;
+		if (bank) extra.bank = bank;
+		await this.appendLog(this.makeEntry("word-add", extra));
+		new Notice(`已加入生字本：${word}${meaning ? `（${meaning}）` : ""}`);
+	}
+
 	/** 請 AI 出修正題並存到 english/fixes/<deviceId>.jsonl；失敗回傳 null。 */
 	async fixQuestion(bank: Bank, old: Question, reason: string): Promise<FixOutcome | null> {
 		if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
@@ -483,7 +507,7 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	refreshViews() {
-		for (const type of [HOME_VIEW, VERIFY_VIEW, PRACTICE_VIEW]) {
+		for (const type of [HOME_VIEW, VERIFY_VIEW, PRACTICE_VIEW, WORDS_VIEW, STATS_VIEW]) {
 			for (const leaf of this.app.workspace.getLeavesOfType(type)) {
 				const v = leaf.view as unknown as { render?: () => unknown };
 				v.render?.();

@@ -65,3 +65,22 @@
 .el-practice .el-user-badge { font-weight: 600; padding: 1px 10px; border-radius: 10px; background: var(--interactive-accent); color: var(--text-on-accent); }
 .el-practice .el-flag { cursor: pointer; color: var(--text-muted); margin-left: 12px; }
 .el-flag-link { cursor: pointer; display: block; margin-top: 4px; }
+/* v0.8：點字、生字本、統計 */
+.el-practice .el-w { cursor: pointer; border-radius: 3px; }
+.el-practice .el-w:hover, .el-practice .el-w:active { background: var(--background-modifier-hover); }
+.el-practice .el-words { line-height: 1.7; }
+.el-word-card .el-row { gap: 10px; }
+.el-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin: 12px 0; }
+.el-tile { border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 10px 12px; }
+.el-tile-value { font-size: 1.8em; font-weight: 600; }
+.el-tile-label { font-size: 0.9em; }
+.el-bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; border-bottom: 1px solid var(--background-modifier-border); }
+.el-bar-col { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+.el-bar { width: 100%; background: var(--interactive-accent); border-radius: 2px 2px 0 0; min-height: 2px; }
+.el-bar.is-zero { background: var(--background-modifier-border); }
+.el-bars-axis { justify-content: space-between; }
+.el-acc-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.el-acc-label { width: 5.5em; flex: none; }
+.el-acc-track { flex: 1; height: 10px; background: var(--background-modifier-border); border-radius: 5px; overflow: hidden; }
+.el-acc-fill { height: 100%; background: var(--color-green); }
+.el-acc-num { width: 8.5em; flex: none; text-align: right; font-size: 0.9em; }
