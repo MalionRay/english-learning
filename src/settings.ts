@@ -64,19 +64,6 @@ export class ELSettingTab extends PluginSettingTab {
 			)
 			.addButton((b) => b.setButtonText("立即備份").onClick(() => p.backup().then(() => this.display())));
 
-		new Setting(containerEl)
-			.setName("口說評分模型")
-			.setDesc("空白＝與出題相同。若評分失敗（模型不支援音訊），可改成 gemini-3.8-flash。")
-			.addText((t) =>
-				t
-					.setPlaceholder(p.settings.geminiModel)
-					.setValue(p.settings.speakModel)
-					.onChange(async (v) => {
-						p.settings.speakModel = v.trim();
-						await p.saveSettings();
-					}),
-			);
-
 		containerEl.createEl("h3", { text: "錄音" });
 		const u = audioUsage(this.app, p.deviceId);
 		new Setting(containerEl)

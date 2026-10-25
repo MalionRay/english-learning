@@ -11,8 +11,7 @@ import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBan
 import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
 import { AnswerLog, GradeLog, QState, computeStates, pickSession } from "./srs";
-import { gradeListening, gradeSpeaking, gradeTranslation } from "./grade";
-import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
+import { gradeListening, gradeTranslation } from "./grade";
 import { cachedZh, translateMany } from "./translate";
 
 export const PRACTICE_VIEW = "english-learning-practice";
@@ -29,7 +28,6 @@ export interface PQ {
 	word?: WordItem; // 生字複習
 	dict?: DictItem; // 聽力
 	phrase?: PhraseItem; // 句子本
-	speak?: DictItem; // 口說跟讀
 }
 
 // ---------------------------------------------------------------------
@@ -81,7 +79,6 @@ export interface PracticeData {
 	logs: UserLog[];
 	words: WordItem[];
 	dicts: DictItem[];
-	speaks: DictItem[];
 	phrases: PhraseItem[];
 	banks: Bank[];
 }
@@ -105,10 +102,6 @@ export function phrasePQ(ph: PhraseItem): PQ {
 		marked: false,
 		phrase: ph,
 	};
-}
-
-export function speakPQ(d: DictItem, banks: Bank[]): PQ {
-	return { ...dictPQ(d, banks), dict: undefined, speak: d };
 }
 
 export function wordPQ(w: WordItem): PQ {
@@ -138,8 +131,7 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 	const marked = new Set([...pqs.filter((p) => p.marked).map((p) => p.q.id), ...words.filter((w) => w.reasons.has("marked")).map((w) => wordQid(w.key))]);
 	const answerLogs = logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade");
 	const dicts = dictationItems(pqs.map((x) => ({ q: x.q, bank: x.bank })));
-	const speaks = dictationItems(pqs.map((x) => ({ q: x.q, bank: x.bank })), "speak:");
-	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, speaks, phrases, banks };
+	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, phrases, banks };
 }
 
 /** 這台裝置自己的、還沒批改的翻譯作答（只批改自己的，避免兩台同時批改同一題）。 */
@@ -164,11 +156,10 @@ interface Prefs {
 
 type Phase = "start" | "busy" | "question" | "done";
 
-type SessionType = QType | "word" | "listening" | "phrase" | "speaking";
-const TYPES: SessionType[] = ["word", "phrase", "vocab", "cloze", "listening", "speaking", "reading", "translate"];
-const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解", phrase: "句子", speaking: "口說跟讀" };
+type SessionType = QType | "word" | "listening" | "phrase";
+const TYPES: SessionType[] = ["word", "phrase", "vocab", "cloze", "listening", "reading", "translate"];
+const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解", phrase: "句子" };
 const TYPE_HINT: Record<SessionType, string> = {
-	speaking: "聽示範後唸出句子，AI 評發音（需要麥克風與網路）",
 	phrase: "對話中被糾正、問過「怎麼說」的句子：看中文說英文",
 	listening: "聽句子，用中文說出意思（AI 批改或自己判斷）",
 	word: "生字本裡的字：看英文回想中文，再翻面確認",
@@ -326,7 +317,7 @@ export class PracticeView extends ItemView {
 				return;
 			}
 			for (const t of TYPES) {
-				const qs = t === "speaking" ? d.speaks.map((x) => speakPQ(x, d.banks)) : t === "phrase" ? d.phrases.map(phrasePQ) : t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
+				const qs = t === "phrase" ? d.phrases.map(phrasePQ) : t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
 				const info = card.createDiv({ cls: "el-type-info" });
@@ -374,7 +365,7 @@ export class PracticeView extends ItemView {
 		this.gradePendingInBackground(d.logs);
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
-		const pqs = type === "speaking" ? d.speaks.map((x) => speakPQ(x, d.banks)) : type === "phrase" ? d.phrases.map(phrasePQ) : type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
+		const pqs = type === "phrase" ? d.phrases.map(phrasePQ) : type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
 		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
 		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
@@ -632,125 +623,6 @@ export class PracticeView extends ItemView {
 		}
 	}
 
-	/** 口說跟讀：聽示範 → 錄音 → AI 評發音（錄音不存檔）；離線時自己對照示範判斷。 */
-	private drawSpeaking(card: HTMLElement, pq: PQ, d: DictItem) {
-		const p = this.plugin;
-		card.createDiv({ cls: "el-muted", text: "先按 🔊 聽示範，再按「🎙 錄音」唸出這句，唸完按「停止」，送出由 AI 評分。" });
-		this.wordLine(card, d.text, { zh: d.zh, cls: "el-qtext", bank: pq.bank });
-		const r1 = card.createDiv({ cls: "el-row el-big-buttons" });
-		const recBtn = r1.createEl("button", { text: "🎙 錄音", cls: "mod-cta" });
-		const mine = r1.createEl("button", { text: "▶ 聽我的錄音" });
-		const send = r1.createEl("button", { text: "送出評分" });
-		const r2 = card.createDiv({ cls: "el-row" });
-		const slow = r2.createEl("button", { text: "🐢 慢速示範", cls: "el-zh-btn" });
-		const skip = r2.createEl("button", { text: "我不知道（跳過）", cls: "el-zh-btn" });
-		const status = card.createDiv({ cls: "el-muted" });
-		const out = card.createDiv();
-		mine.disabled = send.disabled = true;
-		slow.onclick = () => p.say(d.text, 0.7);
-
-		let rec: WavRecorder | null = null;
-		let wav: ArrayBuffer | null = null;
-		let audio: HTMLAudioElement | null = null;
-		const lock = () => {
-			recBtn.disabled = send.disabled = skip.disabled = true;
-		};
-
-		recBtn.onclick = async () => {
-			if (this.answered) return;
-			if (rec?.recording) {
-				const r = await rec.stop();
-				rec = null;
-				recBtn.setText("🎙 重錄");
-				if (r.seconds < 0.4) {
-					status.setText("好像沒有錄到聲音，請再錄一次（確認 Obsidian 有麥克風權限）。");
-					return;
-				}
-				wav = r.wav;
-				mine.disabled = send.disabled = false;
-				status.setText(`錄好了（${r.seconds.toFixed(1)} 秒）。可以先聽聽自己的錄音，或直接送出評分。`);
-				return;
-			}
-			if (!recordingSupported()) return new Notice("這台裝置不支援錄音");
-			rec = new WavRecorder();
-			rec.onAutoStop = () => recBtn.click();
-			try {
-				await rec.start();
-				recBtn.setText("■ 停止");
-				status.setText("錄音中…唸完按「停止」（最長 30 秒）");
-			} catch (e) {
-				rec = null;
-				status.setText(`無法錄音：${(e as Error)?.name ?? e}（請允許 Obsidian 使用麥克風）`);
-			}
-		};
-		mine.onclick = () => {
-			if (!wav) return;
-			audio?.pause();
-			audio = new Audio(URL.createObjectURL(new Blob([wav], { type: "audio/wav" })));
-			audio.play().catch(() => undefined);
-		};
-		skip.onclick = () => {
-			if (this.answered) return;
-			this.answered = true;
-			rec?.cancel();
-			lock();
-			this.record(pq, { correct: false, dontKnow: true });
-			this.nextButton(card);
-		};
-
-		const selfAssess = (why: string) => {
-			const fb = out.createDiv({ cls: "el-feedback" });
-			fb.createDiv({ cls: "el-verdict", text: why });
-			fb.createDiv({ cls: "el-muted", text: "聽聽自己的錄音和示範，自己判斷：" });
-			const r3 = fb.createDiv({ cls: "el-row el-big-buttons" });
-			const opts: [string, { correct: boolean; hint?: boolean }][] = [
-				["唸得好", { correct: true }],
-				["普通", { correct: true, hint: true }],
-				["不好", { correct: false }],
-			];
-			for (const [label, r] of opts) {
-				const b = r3.createEl("button", { text: label, cls: label === "唸得好" ? "mod-cta" : "" });
-				b.onclick = () => {
-					if (this.answered) return;
-					this.answered = true;
-					r3.querySelectorAll("button").forEach((x) => ((x as HTMLButtonElement).disabled = true));
-					this.record(pq, r);
-					this.nextButton(card);
-				};
-			}
-		};
-
-		send.onclick = async () => {
-			if (!wav || this.answered) return;
-			lock();
-			status.setText("評分中…");
-			if (navigator.onLine === false) {
-				status.setText("");
-				return selfAssess("離線中，無法由 AI 評分");
-			}
-			try {
-				const g = await gradeSpeaking(p.speakBackend(), d.text, arrayBufferToBase64(wav), d.level);
-				this.answered = true;
-				status.setText("");
-				this.record(pq, { correct: g.correct, score: g.score, text: g.transcript, feedback: g.feedback });
-				const fb = out.createDiv({ cls: `el-feedback ${g.correct ? "is-ok" : "is-bad"}` });
-				fb.createDiv({ cls: "el-verdict", text: `${g.correct ? "✓" : "✗"} ${g.score} 分` });
-				if (g.transcript) fb.createDiv({ cls: "el-muted", text: `AI 聽到的：${g.transcript}` });
-				for (const it of g.issues) {
-					const row = fb.createDiv({ cls: "el-line el-speak-issue" });
-					row.createSpan({ cls: "el-say", text: it.word });
-					row.createSpan({ text: it.issue });
-				}
-				if (g.feedback) fb.createDiv({ cls: "el-explain", text: g.feedback });
-				this.nextButton(card);
-			} catch (e) {
-				p.debug(`speaking grade failed: ${(e as Error)?.message ?? e}`);
-				status.setText("");
-				selfAssess(`AI 評分失敗：${(e as Error)?.message ?? e}`);
-			}
-		};
-	}
-
 	/** 句子：看中文說（或打）英文 → AI 批改，或翻面自己判斷。 */
 	private drawPhrase(card: HTMLElement, pq: PQ, ph: PhraseItem) {
 		card.createDiv({ cls: "el-muted", text: ph.source === "correction" ? "對話中你想說的話，用英文說說看：" : "你問過的說法，用英文說說看：" });
@@ -914,11 +786,11 @@ export class PracticeView extends ItemView {
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
-		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.listening : pq.phrase ? LABEL.phrase : pq.speak ? LABEL.speaking : TYPE_LABEL[q.type] });
+		top.createSpan({ cls: "el-badge", text: pq.word ? LABEL.word : pq.dict ? LABEL.listening : pq.phrase ? LABEL.phrase : TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
-		if (!pq.word && !pq.dict && !pq.phrase && !pq.speak) {
+		if (!pq.word && !pq.dict && !pq.phrase) {
 			const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
 			flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
 		}
@@ -928,7 +800,6 @@ export class PracticeView extends ItemView {
 		if (pq.word) return this.drawWordCard(card, pq, pq.word);
 		if (pq.dict) return this.drawListening(card, pq, pq.dict);
 		if (pq.phrase) return this.drawPhrase(card, pq, pq.phrase);
-		if (pq.speak) return this.drawSpeaking(card, pq, pq.speak);
 		if (q.type === "translate") return this.drawTranslate(card, pq, q);
 
 		const cq = q as ChoiceQ;
@@ -1145,8 +1016,8 @@ export class PracticeView extends ItemView {
 		const p = this.plugin;
 		const extra: Record<string, unknown> = {
 			qid: pq.q.id,
-			bank: pq.word ? WORD_BANK.sourceId : pq.dict ? pq.dict.bank : pq.speak ? pq.speak.bank : pq.phrase ? "phrases" : pq.bank.sourceId,
-			qtype: pq.word ? "word" : pq.dict ? "listening" : pq.speak ? "speaking" : pq.phrase ? "phrase" : pq.q.type,
+			bank: pq.word ? WORD_BANK.sourceId : pq.dict ? pq.dict.bank : pq.phrase ? "phrases" : pq.bank.sourceId,
+			qtype: pq.word ? "word" : pq.dict ? "listening" : pq.phrase ? "phrase" : pq.q.type,
 			session: this.sessionId,
 		};
 		if (r.correct !== undefined) extra.correct = r.correct;
@@ -1245,9 +1116,7 @@ export class PracticeView extends ItemView {
 			for (const r of wrong) {
 				const q = r.pq.q;
 				const li = ul.createEl("li");
-				if (r.pq.speak) {
-					li.createSpan({ cls: "el-say", text: r.pq.speak.text });
-				} else if (r.pq.phrase) {
+				if (r.pq.phrase) {
 					li.createSpan({ text: r.pq.phrase.zh });
 					li.createSpan({ cls: "el-say el-muted", text: `　${r.pq.phrase.en}` });
 				} else if (r.pq.dict) {

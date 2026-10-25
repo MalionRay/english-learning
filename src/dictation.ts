@@ -37,7 +37,7 @@ function sentencesOf(q: Question): { text: string; zh?: string }[] {
 }
 
 /** 依程度限制長度：小孩 3～14 字，成人 4～25 字。 */
-export function dictationItems(sources: { q: Question; bank: Bank }[], prefix = DICT_PREFIX): DictItem[] {
+export function dictationItems(sources: { q: Question; bank: Bank }[]): DictItem[] {
 	const out = new Map<string, DictItem>();
 	for (const { q, bank } of sources) {
 		for (const s of sentencesOf(q)) {
@@ -46,7 +46,7 @@ export function dictationItems(sources: { q: Question; bank: Bank }[], prefix = 
 			const n = tokens(text).length;
 			const [min, max] = bank.level === "kid" ? [3, 14] : [4, 25];
 			if (n < min || n > max) continue;
-			const id = prefix + audioKey(text);
+			const id = DICT_PREFIX + audioKey(text);
 			if (!out.has(id)) out.set(id, { id, text, zh: s.zh, bank: bank.sourceId, level: bank.level });
 		}
 	}

@@ -19,7 +19,7 @@
    2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0；回報與修正、備份 ← v0.7.x；生字本、點字、統計 ← v0.8.0
    4. 聽力練習：逐字聽寫 v0.9.0 → 改為聽力理解（中文解釋）v0.9.1；預先產生錄音 ← v0.10.0
    3. 文字對話，錯誤回收進 SRS ← v0.11.0
-   5. 依麥克風測試結果決定語音範圍 ← 麥克風 OK：口說跟讀評分 v0.12.0（回合制；即時語音未做）
+   5. 依麥克風測試結果決定語音範圍 ← 發音／口說改用外部 App（ELSA Speak）；v0.12.0 的口說跟讀已在 v0.12.1 移除，不要再加回來
    6. 數學模組
 
 ## 題庫格式
@@ -70,12 +70,6 @@
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53）；練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
-
-## 口說跟讀（src/recorder.ts、src/grade.ts 的 gradeSpeaking）
-- 錄音用 Web Audio（ScriptProcessor）收 PCM，去頭尾靜音、降到 16 kHz、自己編 WAV；不用 MediaRecorder（各平台格式不一）；必須在點擊事件裡 start()
-- 錄音只在記憶體，不存檔不同步；送 Gemini（inlineData audio/wav）評分：transcript、score（≥ 75 算過）、issues（最多 5 個字＋繁中說明）、feedback
-- 句子與聽力理解同源，qid "speak:<cyrb53>"、qtype "speaking"；離線或評分失敗時改自評（唸得好／普通＝hint／不好）
-- 設定 speakModel：空白＝與出題相同；模型不支援音訊時可改
 
 ## 錄音快取（src/audiocache.ts）
 - 預先產生：每題的單字（含克漏字答案）與句子（原句、完整句、參考譯文）；出題完成後背景跑，啟動 2 分鐘後補齊「自己匯入的題庫」（bank.device），額度用完就停；設定可關閉或手動補齊全部
