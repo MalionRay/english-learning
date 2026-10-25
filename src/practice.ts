@@ -710,15 +710,27 @@ export class PracticeView extends ItemView {
 		// 請 AI 出修正題
 		const note = this.contentEl.createDiv({ cls: "el-busy", text: "已回報。AI 正在出一題修正版…" });
 		note.scrollIntoView({ block: "nearest" });
-		const fixed = await p.fixQuestion(pq.bank, pq.q, reason);
-		if (fixed) {
-			const npq: PQ = { q: fixed, bank: pq.bank, marked: fixed.type !== "translate" && !!(fixed as ChoiceQ).marked };
+		const out = await p.fixQuestion(pq.bank, pq.q, reason);
+		if (out?.kind === "originalCorrect") {
+			// 原題沒錯：已自動恢復
+			new Notice(`AI 判斷原本的答案是對的：${out.message}`, 12000);
 			if (!wasAnswered) {
-				new Notice("已換成修正後的題目");
+				this.items[this.idx] = pq;
+				return this.drawQuestion();
+			}
+			note.setText(`AI 判斷原本的答案是對的：${out.message}（這題已恢復出題）`);
+			return;
+		}
+		if (out?.kind === "replaced") {
+			const fixed = out.question;
+			const npq: PQ = { q: fixed, bank: pq.bank, marked: fixed.type !== "translate" && !!(fixed as ChoiceQ).marked };
+			const msg = out.sameId ? "已修正中文與解釋（練習進度保留）" : "已換成修正後的題目";
+			if (!wasAnswered) {
+				new Notice(out.message ? `${msg}：${out.message}` : msg, 8000);
 				this.items[this.idx] = npq;
 				return this.drawQuestion();
 			}
-			note.setText("已出好修正版，之後會當新題出現。按「下一題」繼續。");
+			note.setText(`${msg}${out.message ? `：${out.message}` : ""}。${out.sameId ? "" : "之後會當新題出現。"}按「下一題」繼續。`);
 			return;
 		}
 		note.setText("暫時無法出修正版（可能沒有網路）。這題先跳過，之後可在主畫面的回報清單按「重新出這題」。");

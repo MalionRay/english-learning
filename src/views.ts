@@ -204,9 +204,9 @@ export class FlaggedModal extends Modal {
 				re.onclick = async () => {
 					re.disabled = true;
 					re.setText("出題中…");
-					const nq = await this.plugin.fixQuestion(bank, q, fl.reason ?? "其他");
-					re.setText(nq ? "✓ 已換成修正題" : "失敗，請確認網路後再試");
-					if (!nq) re.disabled = false;
+					const out = await this.plugin.fixQuestion(bank, q, fl.reason ?? "其他");
+					re.setText(!out ? "失敗，請確認網路後再試" : out.kind === "originalCorrect" ? `AI 判斷原題正確，已恢復：${out.message}` : "✓ 已修正");
+					if (!out) re.disabled = false;
 					this.plugin.refreshViews();
 				};
 			}

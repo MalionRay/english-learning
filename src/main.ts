@@ -20,7 +20,7 @@ import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
 import { PRACTICE_VIEW, PracticeView } from "./practice";
 import { backupNow, maybeAutoBackup } from "./backup";
-import { FIX_DIR, makeFix } from "./fixes";
+import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
@@ -421,7 +421,7 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	/** 請 AI 出修正題並存到 english/fixes/<deviceId>.jsonl；失敗回傳 null。 */
-	async fixQuestion(bank: Bank, old: Question, reason: string): Promise<Question | null> {
+	async fixQuestion(bank: Bank, old: Question, reason: string): Promise<FixOutcome | null> {
 		if (typeof navigator !== "undefined" && navigator.onLine === false) return null;
 		let ai: AIBackend;
 		try {
@@ -431,11 +431,18 @@ export default class EnglishLearningPlugin extends Plugin {
 		}
 		const started = Date.now();
 		try {
-			const q = await makeFix(this.app, ai, bank, old, reason);
+			const out = await makeFix(this.app, ai, bank, old, reason);
+			if (out.kind === "originalCorrect") {
+				// AI 判斷原題沒錯：自動恢復，繼續出原題
+				await this.appendLog(this.makeEntry("unflag", { qid: old.id, bank: bank.sourceId, reason: "AI 判斷原題正確" }));
+				this.debug(`fix ${old.id}: original correct (${out.message})`);
+				return out;
+			}
+			const q = out.question;
 			const fix = { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, type: "fix", replaces: old.id, bank: bank.sourceId, reason, question: q };
 			await this.writer.append(normalizePath(`${FIX_DIR}/${this.deviceId}.jsonl`), JSON.stringify(fix) + "\n");
-			this.debug(`fix ${old.id} -> ${q.id} in ${Date.now() - started} ms`);
-			return q;
+			this.debug(`fix ${old.id} -> ${q.id}${out.sameId ? " (same id)" : ""} in ${Date.now() - started} ms`);
+			return out;
 		} catch (e) {
 			this.debug(`fix failed ${old.id}: ${errMsg(e)}`);
 			return null;
