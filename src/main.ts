@@ -23,8 +23,11 @@ import { CleanupPlan, PrefetchResult, audioTextsOfBanks, formatBytes, planCleanu
 import { parseBank } from "./generate";
 import { PHRASES_VIEW, PhrasesView, STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
 import { CHAT_VIEW, ChatView } from "./chatview";
+import { PatternModal } from "./patternview";
 import type { PhraseLog } from "./chat";
 import { cachedZh, translateMany } from "./translate";
+import { IRREGULAR, aiLemma, suffixCandidates } from "./lemma";
+import { wordKey } from "./words";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
@@ -108,6 +111,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.addCommand({ id: "phrases", name: "開啟句子本", callback: () => this.openView(PHRASES_VIEW) });
 		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
 		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
+		this.addCommand({ id: "patterns", name: "分析常見錯誤", callback: () => new PatternModal(this.app, this).open() });
 		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
 		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
@@ -493,7 +497,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		for (const u of this.settings.users) {
 			const d = await loadPractice(this.app, u, "all");
 			states.push(d.states);
-			for (const w of d.words) if (w.reasons.has("manual")) words.push(w.word);
+			for (const w of d.words) if (w.reasons.has("manual")) words.push(w.word, ...w.forms);
 		}
 		return planCleanup(this.app, banks, states, words);
 	}
@@ -535,7 +539,18 @@ export default class EnglishLearningPlugin extends Plugin {
 				/* 之後複習時再查 */
 			}
 		}
+		// 看起來像變化形（went、studying…）且不在不規則表裡：請 AI 查原形，生字本才能合併
+		let lemma: string | undefined;
+		const key = wordKey(word);
+		if (!key.includes(" ") && !(key in IRREGULAR) && suffixCandidates(key).length && navigator.onLine !== false) {
+			try {
+				lemma = await aiLemma(this.backend(), word, context);
+			} catch {
+				/* 查不到就只用規則合併 */
+			}
+		}
 		const extra: Record<string, unknown> = { word };
+		if (lemma && lemma !== key) extra.lemma = lemma;
 		if (meaning) extra.meaning = meaning;
 		if (context) extra.context = context;
 		if (bank) extra.bank = bank;

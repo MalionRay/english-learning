@@ -2,7 +2,7 @@
 import { App, ItemView, Modal, Notice, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { FLAG_REASONS, loadFlags } from "./flags";
 import { loadFixes, resolveQuestion } from "./fixes";
-import { WordItem, WordLog, buildWordBook, wordKey, wordQid } from "./words";
+import { WordItem, WordLog, aliasWordQids, buildWordBookWithAliases, wordKey, wordQid } from "./words";
 import { DictItem, dictationItems } from "./dictation";
 import { PhraseItem, PhraseLog, buildPhraseBook, phraseQid } from "./chat";
 import { Menu } from "obsidian";
@@ -123,13 +123,17 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 		if (!q) continue;
 		pqs.push(q === x.q ? x : { q, bank: x.bank, marked: q.type !== "translate" && !!(q as ChoiceQ).marked });
 	}
-	const words = buildWordBook(
+	const { words, aliases } = buildWordBookWithAliases(
 		banks.filter((b) => level === "all" || b.level === level),
 		logs as (AnswerLog | GradeLog | WordLog)[],
 	);
 	const phrases = buildPhraseBook(logs);
 	const marked = new Set([...pqs.filter((p) => p.marked).map((p) => p.q.id), ...words.filter((w) => w.reasons.has("marked")).map((w) => wordQid(w.key))]);
-	const answerLogs = logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade");
+	// 合併的字（went → go）：舊 key 的複習紀錄算到合併後的字
+	const answerLogs = aliasWordQids(
+		logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade"),
+		aliases,
+	);
 	const dicts = dictationItems(pqs.map((x) => ({ q: x.q, bank: x.bank })));
 	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, phrases, banks };
 }
@@ -636,7 +640,7 @@ export class PracticeView extends ItemView {
 
 	/** 句子：看中文說（或打）英文 → AI 批改，或翻面自己判斷。 */
 	private drawPhrase(card: HTMLElement, pq: PQ, ph: PhraseItem) {
-		card.createDiv({ cls: "el-muted", text: ph.source === "correction" ? "對話中你想說的話，用英文說說看：" : "你問過的說法，用英文說說看：" });
+		card.createDiv({ cls: "el-muted", text: ph.source === "correction" ? "對話中你想說的話，用英文說說看：" : ph.source === "pattern" ? "常見錯誤的練習句，用英文說說看：" : "你問過的說法，用英文說說看：" });
 		card.createDiv({ cls: "el-qword", text: ph.zh });
 		if (ph.source === "correction" && ph.original) card.createDiv({ cls: "el-muted", text: `（你當時寫的：${ph.original}）` });
 		const ta = card.createEl("textarea", { cls: "el-textarea el-answer", attr: { rows: "3", autocapitalize: "sentences", placeholder: "Type or dictate your English" } });
@@ -718,6 +722,7 @@ export class PracticeView extends ItemView {
 		const head = card.createDiv({ cls: "el-qword el-line" });
 		head.createSpan({ cls: "el-say", text: w.word });
 		if (w.ipa) head.createSpan({ cls: "el-ipa", text: ` ${w.ipa}` });
+		if (w.forms.size) card.createDiv({ cls: "el-muted", text: `也包含：${[...w.forms].join("、")}` });
 		if (w.context) this.wordLine(card, w.context, { zh: w.contextZh });
 		const tags: string[] = [];
 		if (w.reasons.has("marked")) tags.push("標記的生字");

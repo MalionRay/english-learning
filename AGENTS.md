@@ -61,6 +61,8 @@
 - 生字複習用 SRS，qid 為 "word:<key>"、qtype "word"、bank "words"
 - 練習畫面的英文句子逐字可點（Menu：唸、看中文、加入生字本）；作答前看中文算 hint
 - 統計：連續天數、今日題數、30 天長條圖、各題型正確率（30 天）、已熟練（step ≥ 3）
+- 字形合併（src/lemma.ts）：go／went／going 合成一筆（WordItem.forms）。順序：word-add 的 lemma（加入時字看起來像變化形才請 AI 查）→ 不規則表 IRREGULAR（有歧義的字如 left、found 只在原形也在生字本時合併）→ 字尾規則（-s、-ed、-ing…）只在原形已在生字本時合併；片語不合併
+- 合併後舊 key 的複習紀錄用 aliasWordQids 在計算時改成合併後的 qid（不改 log）
 
 ## 聽力理解（src/dictation.ts、src/grade.ts 的 gradeListening）
 - v0.9.1 起取代逐字聽寫：聽句子，用中文寫出意思由 AI 批改（≥ 70 分算懂；離線 pending，之後由同一裝置補批），或翻面自己判斷（聽懂／部分懂＝hint／沒聽懂）
@@ -73,6 +75,16 @@
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53）；練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
 
+## 錯誤模式分析（src/patterns.ts、src/patternview.ts）
+- 收集最近 60 天的錯誤：翻譯／句子題分數 < 90 且有修正、克漏字打錯（不含「我不知道」）、這位使用者對話裡的 correction；同一句只留一次，最新的最多 80 筆；少於 5 筆不呼叫 AI
+- AI 回 JSON：summary、patterns[]（title、explanation、examples、tip、drills[3]）；報告存 english/reports/<user>/<日期-時分>-<deviceId>.md（單一寫入者），也在備份範圍
+- 練習句勾選後加入句子本（phrase-add，source "pattern"）；入口：學習統計畫面、指令「分析常見錯誤」
+
+## 拍照匯入（src/ocr.ts）
+- 匯入視窗「拍照／選照片」：input type=file accept=image/*（可多選）；canvas 縮到長邊 1600px 的 JPEG，以 inlineData 送 Gemini（AIOptions.images）
+- 回 JSON：title、text（原文照抄、合併斷行）、marked（手寫螢光筆／底線／圈起來的字 → 填進「我不會的字」）；多張依序接起來
+- 照片不存進 Vault；辨識結果填進視窗讓使用者檢查後再匯入
+
 ## 錄音快取（src/audiocache.ts）
 - 預先產生：每題的單字（含克漏字答案）與句子（原句、完整句、參考譯文）；出題完成後背景跑，啟動 2 分鐘後補齊「自己匯入的題庫」（bank.device），額度用完就停；設定可關閉或手動補齊全部
 - normalizeSpeech 會去掉句首／句尾的 ...，同一句只存一份
@@ -80,7 +92,7 @@
 - 設定顯示錄音總用量與這台裝置的用量
 
 ## 備份（src/backup.ts）
-- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
+- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations、english/reports 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原（設定 →「從備份還原」，restoreBackup）：只補不蓋——缺少的檔案重建；.jsonl 依每行的 id 補回缺少的行；已存在的 .md 保留不動
 
 ## 專案慣例

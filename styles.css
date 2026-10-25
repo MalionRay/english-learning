@@ -105,3 +105,7 @@
 .el-chat-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); }
 .el-chat-input textarea { flex: 1; font-size: 1.05em; min-height: 48px; }
 .el-chat-input button { min-height: 44px; padding: 0 18px; }
+
+/* 錯誤模式分析 */
+.el-drill { gap: 6px; align-items: baseline; cursor: pointer; }
+.el-drill input { flex: none; }

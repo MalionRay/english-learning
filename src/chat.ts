@@ -193,7 +193,7 @@ export interface PhraseLog {
 	en?: string;
 	alt?: string;
 	note?: string;
-	source?: "correction" | "howto";
+	source?: "correction" | "howto" | "pattern";
 	original?: string;
 	conv?: string;
 }
@@ -204,7 +204,7 @@ export interface PhraseItem {
 	en: string;
 	alt?: string;
 	note?: string;
-	source: "correction" | "howto";
+	source: "correction" | "howto" | "pattern";
 	original?: string;
 	addedAt: string;
 }
