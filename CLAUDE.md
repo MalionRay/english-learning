@@ -54,7 +54,7 @@
 - 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint
 
 ## 備份（src/backup.ts）
-- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
+- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原目前是手動：從 JSON 的 files 取出內容寫回原路徑
 
 ## 專案慣例
