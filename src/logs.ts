@@ -8,7 +8,7 @@ export interface LogEntry {
 	ts: string; // ISO 時間戳
 	device: string;
 	user: string;
-	type: "tap" | "api" | "mic" | "sync" | "tts" | "answer" | "grade";
+	type: "tap" | "api" | "mic" | "sync" | "tts" | "answer" | "grade" | "flag" | "unflag" | "backup";
 	[k: string]: unknown;
 }
 

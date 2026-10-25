@@ -2,8 +2,10 @@ import { App, ItemView, Modal, Notice, Setting, WorkspaceLeaf } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { HOME_VIEW, VERIFY_VIEW } from "./constants";
 import { DEBUG_ROOT, logPath } from "./logs";
-import { LEVEL_LABEL, Level, MAX_WORDS, planFor, planTotal, wordCount } from "./generate";
-import { canGenerate, listSources } from "./sources";
+import { LEVEL_LABEL, Level, MAX_WORDS, Question, TYPE_LABEL, parseBank, planFor, planTotal, wordCount } from "./generate";
+import { bankPath, canGenerate, listSources } from "./sources";
+import { FlagLog, loadFlags } from "./flags";
+import { TFile } from "obsidian";
 
 // =====================================================================
 // 主畫面：文章列表、匯入、出題
@@ -52,8 +54,10 @@ export class HomeView extends ItemView {
 		if (!sources.length) {
 			el.createDiv({ cls: "el-muted", text: "還沒有文章。按「匯入文章」貼上一篇英文文章，或在 english/sources 資料夾新增筆記。" });
 		}
+		const cards = new Map<string, HTMLElement>();
 		for (const s of sources) {
 			const card = el.createDiv({ cls: "el-card" });
+			if (s.id) cards.set(s.id, card);
 			const head = card.createDiv({ cls: "el-row" });
 			const a = head.createEl("a", { text: s.title, cls: "el-title" });
 			a.onclick = () => this.app.workspace.getLeaf(false).openFile(s.file);
@@ -92,6 +96,20 @@ export class HomeView extends ItemView {
 			}
 			if (s.lastError && s.status !== "generated") card.createDiv({ cls: "el-warn", text: `上次失敗：${s.lastError}` });
 		}
+
+		// 被回報有問題的題目
+		loadFlags(this.app)
+			.then((flags) => {
+				const byBank = new Map<string, FlagLog[]>();
+				for (const f of flags.values()) byBank.set(f.bank, [...(byBank.get(f.bank) ?? []), f]);
+				for (const [bank, list] of byBank) {
+					const card = cards.get(bank);
+					if (!card) continue;
+					const a = card.createEl("a", { cls: "el-warn el-flag-link", text: `⚑ ${list.length} 題被回報有問題（不會出題）` });
+					a.onclick = () => new FlaggedModal(this.app, p, bank, list).open();
+				}
+			})
+			.catch(() => undefined);
 
 
 	}
@@ -151,6 +169,40 @@ export class ImportModal extends Modal {
 		row.createEl("button", { text: "匯入並出題", cls: "mod-cta" }).onclick = () => go(true);
 	}
 
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+/** 列出某篇文章被回報的題目，可以恢復。 */
+export class FlaggedModal extends Modal {
+	constructor(app: App, private plugin: EnglishLearningPlugin, private bankId: string, private flags: FlagLog[]) {
+		super(app);
+	}
+	async onOpen() {
+		this.setTitle("被回報的題目");
+		const f = this.app.vault.getAbstractFileByPath(bankPath(this.bankId));
+		const bank = f instanceof TFile ? parseBank(await this.app.vault.cachedRead(f)) : null;
+		const qs = new Map<string, Question>((bank?.questions ?? []).map((q) => [q.id, q]));
+		for (const fl of this.flags) {
+			const q = qs.get(fl.qid);
+			const box = this.contentEl.createDiv({ cls: "el-card" });
+			box.createDiv({ cls: "el-muted", text: `${q ? TYPE_LABEL[q.type] : "題目"}・${fl.user}・${new Date(fl.ts).toLocaleDateString()}・${fl.reason ?? ""}` });
+			if (q) {
+				box.createDiv({ text: q.prompt });
+				if (q.type !== "translate") box.createDiv({ cls: "el-muted", text: `標示的答案：${q.options[q.answer]}` });
+				else box.createDiv({ cls: "el-muted", text: `參考答案：${q.reference}` });
+			} else box.createDiv({ cls: "el-muted", text: "（找不到題目，可能題庫已重新產生）" });
+			const b = box.createEl("button", { text: "恢復出題" });
+			b.onclick = async () => {
+				const p = this.plugin;
+				await p.appendLog(p.makeEntry("unflag", { qid: fl.qid, bank: fl.bank }));
+				b.disabled = true;
+				b.setText("已恢復");
+				p.refreshViews();
+			};
+		}
+	}
 	onClose() {
 		this.contentEl.empty();
 	}

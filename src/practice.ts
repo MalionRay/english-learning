@@ -1,5 +1,6 @@
 // 練習介面：開始前同步 → 依 SRS 出題 → 作答寫 log → 結束並同步。
-import { App, ItemView, Notice, TFile, WorkspaceLeaf } from "obsidian";
+import { App, ItemView, Modal, Notice, Setting, TFile, WorkspaceLeaf } from "obsidian";
+import { FLAG_REASONS, loadFlags } from "./flags";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
@@ -69,8 +70,9 @@ export interface PracticeData {
 }
 
 export async function loadPractice(app: App, user: string, level: LevelFilter): Promise<PracticeData> {
-	const [banks, logs] = await Promise.all([loadBanks(app), loadUserLogs(app, user)]);
-	const pqs = questionsFor(banks, level);
+	const [banks, logs, flags] = await Promise.all([loadBanks(app), loadUserLogs(app, user), loadFlags(app)]);
+	// 被回報有問題的題目不出
+	const pqs = questionsFor(banks, level).filter((x) => !flags.has(x.q.id));
 	const marked = new Set(pqs.filter((p) => p.marked).map((p) => p.q.id));
 	return { pqs, states: computeStates(logs, marked), logs };
 }
@@ -427,11 +429,14 @@ export class PracticeView extends ItemView {
 		const top = el.createDiv({ cls: "el-row el-top" });
 		const realTotal = this.items.filter((x) => !x.relearn).length;
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
+		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
 		top.createSpan({ cls: "el-badge", text: TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
+		const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
+		flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
 		el.createDiv({ cls: "el-progress" }).createDiv({ cls: "el-progress-bar" }).style.width = `${Math.round((this.idx / this.items.length) * 100)}%`;
 
 		const card = el.createDiv({ cls: "el-qcard" });
@@ -685,6 +690,21 @@ export class PracticeView extends ItemView {
 		}
 	}
 
+	private async flagCurrent(reason: string) {
+		const p = this.plugin;
+		const pq = this.items[this.idx];
+		await p.appendLog(p.makeEntry("flag", { qid: pq.q.id, bank: pq.bank.sourceId, qtype: pq.q.type, reason })).catch(() => undefined);
+		// 這場後面如果還排了這題（答錯重練），也拿掉
+		this.items = this.items.filter((x, i) => i <= this.idx || x.q.id !== pq.q.id);
+		new Notice("已回報，這題之後不會再出現（可在主畫面恢復）");
+		p.debug(`flag ${pq.q.id} (${reason})`);
+		if (this.answered) return; // 已作答：留在這頁，按「下一題」繼續
+		this.answered = true;
+		if (this.idx >= this.items.length - 1) return this.finish();
+		this.idx++;
+		this.drawQuestion();
+	}
+
 	private nextButton(card: HTMLElement) {
 		const row = card.createDiv({ cls: "el-row el-big-buttons" });
 		const last = this.idx >= this.items.length - 1;
@@ -745,5 +765,31 @@ export class PracticeView extends ItemView {
 			};
 		});
 		this.plugin.debug(`practice end type=${this.sessionType} right=${right}/${graded.length} pending=${pend}`);
+	}
+}
+
+export class FlagModal extends Modal {
+	private reason = FLAG_REASONS[0];
+	private note = "";
+	constructor(app: App, private onOk: (reason: string) => void) {
+		super(app);
+	}
+	onOpen() {
+		this.setTitle("這題有問題");
+		this.contentEl.createEl("p", { text: "回報後，這題對所有人都不會再出現。之後可以在主畫面恢復。" });
+		new Setting(this.contentEl).setName("原因").addDropdown((d) => {
+			for (const r of FLAG_REASONS) d.addOption(r, r);
+			d.setValue(this.reason).onChange((v) => (this.reason = v));
+		});
+		new Setting(this.contentEl).setName("補充（可留空）").addText((t) => t.onChange((v) => (this.note = v)));
+		const row = this.contentEl.createDiv({ cls: "el-row el-modal-buttons" });
+		row.createEl("button", { text: "取消" }).onclick = () => this.close();
+		row.createEl("button", { text: "回報", cls: "mod-warning" }).onclick = () => {
+			this.close();
+			this.onOk(this.note.trim() ? `${this.reason}：${this.note.trim()}` : this.reason);
+		};
+	}
+	onClose() {
+		this.contentEl.empty();
 	}
 }

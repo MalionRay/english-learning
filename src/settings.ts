@@ -5,6 +5,7 @@ import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, LS_TTS_VOICE, defaultVoice, englishVoices, getRate } from "./tts";
 import { loadQuota } from "./pronounce";
+import { LS_LAST_BACKUP } from "./backup";
 
 export class ELSettingTab extends PluginSettingTab {
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
@@ -51,6 +52,15 @@ export class ELSettingTab extends PluginSettingTab {
 					await p.saveSettings();
 				}),
 			);
+
+		containerEl.createEl("h3", { text: "備份" });
+		const lastBackup = this.app.loadLocalStorage(LS_LAST_BACKUP);
+		new Setting(containerEl)
+			.setName("自動備份")
+			.setDesc(
+				`每 7 天自動把答題紀錄、文章與題庫備份到 backup/${p.deviceId}/，保留最近 4 份。上次備份：${typeof lastBackup === "string" ? new Date(lastBackup).toLocaleString() : "還沒有"}`,
+			)
+			.addButton((b) => b.setButtonText("立即備份").onClick(() => p.backup().then(() => this.display())));
 
 		containerEl.createEl("h3", { text: "發音" });
 		containerEl.createEl("p", {
