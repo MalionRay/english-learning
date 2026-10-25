@@ -45,3 +45,17 @@
 .el-busy { font-size: 1.1em; margin: 24px 0; }
 .el-article { margin: 8px 0; }
 .el-article p { margin: 6px 0; line-height: 1.5; }
+/* v0.6：題型選擇、中文按鈕 */
+.el-types { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.el-type-card { display: flex; align-items: center; gap: 12px; border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 12px 14px; }
+.el-type-info { flex: 1; }
+.el-type-card button { min-height: 44px; padding: 0 22px; }
+.el-line-wrap { margin: 4px 0; }
+.el-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.el-practice button.el-zh-btn { height: auto; min-height: 0; padding: 1px 8px; font-size: 0.8em; border-radius: 10px; flex: none; }
+.el-practice button.el-zh-btn.is-on { background: var(--interactive-accent); color: var(--text-on-accent); }
+.el-zh { color: var(--text-muted); font-size: 0.95em; margin: 2px 0 6px; padding-left: 8px; border-left: 2px solid var(--background-modifier-border); }
+.el-opt-zh { color: var(--text-muted); font-size: 0.88em; margin-top: 2px; }
+.el-opts-zh-row { margin-top: -4px; }
+.el-practice button.el-idk { margin-top: 4px; min-height: 40px; padding: 0 16px; color: var(--text-muted); }
+.el-para { margin: 8px 0; line-height: 1.5; }

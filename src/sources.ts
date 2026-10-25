@@ -225,7 +225,7 @@ export async function generateForSource(
 		const res = await ai.complete(userPrompt(article, plan, marked), {
 			system: systemPrompt(level),
 			json: true,
-			maxOutputTokens: 8192,
+			maxOutputTokens: 12000,
 			temperature: 0.7,
 		});
 		if (!res.text) throw new Error(`AI 沒有回傳內容（finishReason=${res.finishReason ?? "?"}）`);

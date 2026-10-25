@@ -24,6 +24,9 @@ export interface ChoiceQ extends BaseQ {
 	options: string[]; // 4 個
 	answer: number; // 正確選項的 index
 	context?: string; // 單字題：文章中的原句
+	contextZh?: string; // 原句的中文翻譯
+	promptZh?: string; // 題目（克漏字為完整句、閱讀為問題）的中文翻譯
+	optionsZh?: string[]; // 英文選項的中文意思（與 options 同順序）
 	word?: string; // 單字題：英文單字（之後進單字庫）
 	ipa?: string; // 單字題：IPA 音標（美式）
 	marked?: boolean; // 使用者標記的生字
@@ -153,13 +156,13 @@ Return ONLY a JSON object of this shape:
 
 Question object shapes:
 1. Vocabulary (type "vocab"): a word or phrase that appears in the article.
-   {"type":"vocab","direction":"en2zh","word":"<English word/phrase>","ipa":"<American IPA between slashes, e.g. /ˈɛspiəˌnɑʒ/>","context":"<the exact sentence from the article containing it>","prompt":"<the English word/phrase>","options":["<4 Traditional Chinese meanings>"],"answer":<0-3>,"explanation":"<繁中：在此句中的意思、詞性、常見搭配或另一個例句>"}
-   or with "direction":"zh2en": "prompt" is a Traditional Chinese meaning and "options" are 4 English words/phrases.
+   {"type":"vocab","direction":"en2zh","word":"<English word/phrase>","ipa":"<American IPA between slashes, e.g. /ˈɛspiəˌnɑʒ/>","context":"<the exact sentence from the article containing it>","contextZh":"<繁中翻譯 of the context sentence>","prompt":"<the English word/phrase>","options":["<4 Traditional Chinese meanings>"],"answer":<0-3>,"explanation":"<繁中：在此句中的意思、詞性、常見搭配或另一個例句>"}
+   or with "direction":"zh2en": "prompt" is a Traditional Chinese meaning, "options" are 4 English words/phrases, and add "optionsZh":["<繁中 meaning of each English option, same order>"].
    Wrong options must be plausible but clearly wrong in this context.
 2. Cloze (type "cloze"): take a sentence from the article and replace ONE word or short phrase with "____".
-   {"type":"cloze","prompt":"<sentence with ____>","options":["<4 English candidates>"],"answer":<0-3>,"explanation":"<繁中：為什麼這個答案正確，其他選項為什麼不對>"}
+   {"type":"cloze","prompt":"<sentence with ____>","promptZh":"<繁中翻譯 of the COMPLETE sentence with the answer filled in>","options":["<4 English candidates>"],"optionsZh":["<繁中 meaning of each option, same order>"],"answer":<0-3>,"explanation":"<繁中：為什麼這個答案正確，其他選項為什麼不對>"}
 3. Reading comprehension (type "reading"):
-   {"type":"reading","prompt":"<question in English>","options":["<4 English answers>"],"answer":<0-3>,"explanation":"<繁中：根據文章哪一段/哪一句>"}
+   {"type":"reading","prompt":"<question in English>","promptZh":"<繁中翻譯 of the question>","options":["<4 English answers>"],"optionsZh":["<繁中翻譯 of each option, same order>"],"answer":<0-3>,"explanation":"<繁中：根據文章哪一段/哪一句>"}
 4. Translation (type "translate"): a Traditional Chinese sentence for the learner to translate into English, reusing vocabulary or grammar from the article.
    {"type":"translate","prompt":"<繁中句子>","reference":"<a natural English translation>","explanation":"<繁中：關鍵字詞與文法重點>"}
 
@@ -199,7 +202,9 @@ function shuffleChoice(q: ChoiceQ, rand: () => number): ChoiceQ {
 		const j = Math.floor(rand() * (i + 1));
 		[idx[i], idx[j]] = [idx[j], idx[i]];
 	}
-	return { ...q, options: idx.map((i) => q.options[i]), answer: idx.indexOf(q.answer) };
+	const out: ChoiceQ = { ...q, options: idx.map((i) => q.options[i]), answer: idx.indexOf(q.answer) };
+	if (q.optionsZh) out.optionsZh = idx.map((i) => q.optionsZh![i]);
+	return out;
 }
 
 /** 把句子轉成單字集合，用來判斷兩題是不是用了同一句。 */
@@ -320,11 +325,17 @@ export function parseQuestions(text: string, rand: () => number = Math.random): 
 			}
 		}
 		const q: ChoiceQ = { id: uuid(), type, prompt, options, answer, explanation };
+		const promptZh = str(r.promptZh);
+		if (promptZh) q.promptZh = promptZh;
+		const optionsZh = Array.isArray(r.optionsZh) ? r.optionsZh.map(str) : [];
+		if (optionsZh.length === 4 && optionsZh.every(Boolean)) q.optionsZh = optionsZh;
 		if (type === "vocab") {
 			const word = str(r.word);
 			const context = str(r.context);
 			if (word) q.word = word;
 			if (context) q.context = context;
+			const contextZh = str(r.contextZh);
+			if (contextZh) q.contextZh = contextZh;
 			let ipa = str(r.ipa);
 			if (ipa) {
 				ipa = ipa.replace(/^[/[]|[/\]]$/g, "");
@@ -408,7 +419,8 @@ export function renderBank(bank: Bank, sourceLinkTarget: string): string {
 				q.options.forEach((o, i) => parts.push(`- ${LETTERS[i]}. ${o}`));
 				parts.push("");
 				const ans = q.type === "cloze" ? say(q.prompt.replace("____", q.options[q.answer]), true) : `${LETTERS[q.answer]}. ${q.options[q.answer]}`;
-				parts.push("> [!success]- 答案", quoteLines(`${q.type === "cloze" ? `${LETTERS[q.answer]}. ${q.options[q.answer]}\n\n` : ""}${reveal}${ans}\n\n${q.explanation}`), "");
+				const zh = [q.contextZh, q.promptZh].filter(Boolean).map((z) => `（中）${z}`).join("\n");
+				parts.push("> [!success]- 答案", quoteLines(`${q.type === "cloze" ? `${LETTERS[q.answer]}. ${q.options[q.answer]}\n\n` : ""}${reveal}${ans}\n\n${zh ? `${zh}\n\n` : ""}${q.explanation}`), "");
 			}
 		}
 	}
