@@ -16,7 +16,7 @@
 1. 驗證外掛（裝置 ID、append log、合計、API 呼叫、麥克風）✓ 已通過（Windows + iPad；iPhone 延後）
 2. 正式功能：
    1. 文章匯入與 AI 出題 ← v0.2.x；生字標記、音標與朗讀 ← v0.3.x；真人／Gemini 發音與錄音快取 ← v0.4.0
-   2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0
+   2. 練習介面、SRS 依 log 重算、開始與結束同步流程 ← v0.5.0；分題型、中文翻譯、我不知道 ← v0.6.0
    3. 文字對話，錯誤回收進 SRS
    4. 鍵盤聽寫與 TTS 朗讀
    5. 依麥克風測試結果決定語音範圍
@@ -43,6 +43,10 @@
 - 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
 - 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
 - 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
+- 一次只練一種題型（開始畫面依題型列出到期／新題數）
+- 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
+- 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
+- 「我不知道」→ correct: false、dontKnow: true
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js

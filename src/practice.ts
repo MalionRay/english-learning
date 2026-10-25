@@ -1,14 +1,15 @@
 // 練習介面：開始前同步 → 依 SRS 出題 → 作答寫 log → 結束並同步。
 import { App, ItemView, Notice, TFile, WorkspaceLeaf } from "obsidian";
 import type EnglishLearningPlugin from "./main";
-import { Bank, ChoiceQ, LEVEL_LABEL, Level, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
+import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
 import { AnswerLog, GradeLog, QState, computeStates, pickSession } from "./srs";
-import { PASS, gradeTranslation } from "./grade";
+import { gradeTranslation } from "./grade";
+import { cachedZh, translateMany } from "./translate";
 
 export const PRACTICE_VIEW = "english-learning-practice";
-const LS_PRACTICE = "english-learning:practice"; // { [user]: { level, size } }
+const LS_PRACTICE = "english-learning:practice"; // { [user]: { level, size, sync } }
 export const LS_LAST_SYNC_DONE = "english-learning:last-sync-done";
 
 export type LevelFilter = Level | "all";
@@ -88,18 +89,33 @@ interface Result {
 	pending?: boolean;
 }
 
+interface Prefs {
+	level: LevelFilter;
+	size: number;
+	sync: boolean;
+}
+
 type Phase = "start" | "busy" | "question" | "done";
+
+const TYPES: QType[] = ["vocab", "cloze", "reading", "translate"];
+const TYPE_HINT: Record<QType, string> = {
+	vocab: "看英文選中文（或反過來）",
+	cloze: "句子挖空，選出正確的字",
+	reading: "依文章內容回答問題",
+	translate: "中翻英，AI 批改",
+};
 
 export class PracticeView extends ItemView {
 	private phase: Phase = "start";
 	private busyText = "";
 	private sessionId = "";
+	private sessionType: QType = "vocab";
 	private items: PQ[] = [];
 	private idx = 0;
 	private results: Result[] = [];
 	private requeued = new Set<string>();
 	private answered = false;
-	private level: Level = "adult";
+	private hintUsed = false;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -125,13 +141,13 @@ export class PracticeView extends ItemView {
 	}
 
 	// ---- 偏好（每台裝置、每位使用者） ----
-	private prefs(): { level: LevelFilter; size: number } {
-		const all = (this.app.loadLocalStorage(LS_PRACTICE) ?? {}) as Record<string, { level: LevelFilter; size: number }>;
+	private prefs(): Prefs {
+		const all = (this.app.loadLocalStorage(LS_PRACTICE) ?? {}) as Record<string, Partial<Prefs>>;
 		const u = this.plugin.user;
-		return all[u] ?? { level: u === "kid" ? "kid" : "adult", size: 20 };
+		return { level: u === "kid" ? "kid" : "adult", size: 20, sync: true, ...(all[u] ?? {}) };
 	}
 
-	private savePrefs(p: { level: LevelFilter; size: number }) {
+	private savePrefs(p: Prefs) {
 		const all = (this.app.loadLocalStorage(LS_PRACTICE) ?? {}) as Record<string, unknown>;
 		all[this.plugin.user] = p;
 		this.app.saveLocalStorage(LS_PRACTICE, all);
@@ -145,7 +161,7 @@ export class PracticeView extends ItemView {
 		return el;
 	}
 
-	// ---- 開始畫面 ----
+	// ---- 開始畫面：選題型 ----
 	private async drawStart() {
 		const p = this.plugin;
 		const el = this.root();
@@ -161,48 +177,59 @@ export class PracticeView extends ItemView {
 				p.user = sel.value;
 				this.drawStart();
 			};
-		});
-		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "題庫" });
-			const sel = r.createEl("select", { cls: "dropdown" });
-			sel.createEl("option", { text: "成人", value: "adult" });
-			sel.createEl("option", { text: "小孩", value: "kid" });
-			sel.createEl("option", { text: "全部", value: "all" });
-			sel.value = prefs.level;
-			sel.onchange = () => {
-				this.savePrefs({ ...prefs, level: sel.value as LevelFilter });
+			const lv = r.createEl("select", { cls: "dropdown" });
+			lv.createEl("option", { text: "成人", value: "adult" });
+			lv.createEl("option", { text: "小孩", value: "kid" });
+			lv.createEl("option", { text: "全部", value: "all" });
+			lv.value = prefs.level;
+			lv.onchange = () => {
+				this.savePrefs({ ...prefs, level: lv.value as LevelFilter });
 				this.drawStart();
 			};
 			r.createSpan({ text: "題數" });
 			const size = r.createEl("select", { cls: "dropdown" });
 			for (const n of [10, 20, 30]) size.createEl("option", { text: String(n), value: String(n) });
 			size.value = String(prefs.size);
-			size.onchange = () => this.savePrefs({ ...prefs, size: Number(size.value) });
+			size.onchange = () => this.savePrefs({ ...this.prefs(), size: Number(size.value) });
+		});
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const cb = r.createEl("input", { attr: { type: "checkbox", id: "el-sync-first" } });
+			cb.checked = prefs.sync;
+			cb.onchange = () => this.savePrefs({ ...this.prefs(), sync: cb.checked });
+			r.createEl("label", { text: "開始前先同步（下載其他裝置的進度）", attr: { for: "el-sync-first" } });
 		});
 
-		const stats = el.createDiv({ cls: "el-muted", text: "計算中…" });
+		const list = el.createDiv({ cls: "el-types" });
+		list.createDiv({ cls: "el-muted", text: "計算中…" });
 		const last = this.app.loadLocalStorage(LS_LAST_SYNC_DONE);
 		el.createDiv({ cls: "el-muted", text: `上次「結束並同步」：${typeof last === "string" ? new Date(last).toLocaleString() : "還沒有"}` });
-
-		el.createDiv({ cls: "el-row el-big-buttons" }, (r) => {
-			const go = r.createEl("button", { text: "同步後開始", cls: "mod-cta" });
-			go.onclick = () => this.start(true);
-			const now = r.createEl("button", { text: "直接開始（不同步）" });
-			now.onclick = () => this.start(false);
-		});
 
 		try {
 			const d = await loadPractice(this.app, p.user, prefs.level);
 			if (this.phase !== "start") return;
-			const pick = pickSession(d.pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 10000);
+			list.empty();
+			if (!d.pqs.length) {
+				list.createDiv({ cls: "el-muted", text: "這個題庫還沒有題目。先到主畫面匯入文章並出題。" });
+				return;
+			}
+			for (const t of TYPES) {
+				const qs = d.pqs.filter((x) => x.q.type === t);
+				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
+				const card = list.createDiv({ cls: "el-type-card" });
+				const info = card.createDiv({ cls: "el-type-info" });
+				info.createDiv({ cls: "el-title", text: TYPE_LABEL[t] });
+				info.createDiv({ cls: "el-muted", text: TYPE_HINT[t] });
+				info.createDiv({ text: `到期 ${pick.dueTotal}・新題 ${pick.freshTotal}・共 ${qs.length}` });
+				const b = card.createEl("button", { text: "開始", cls: pick.dueTotal + pick.freshTotal ? "mod-cta" : "" });
+				b.disabled = !qs.length;
+				b.onclick = () => this.start(t);
+			}
 			const pend = pendingAnswers(d.logs, p.deviceId).length;
-			stats.setText(
-				d.pqs.length
-					? `到期 ${pick.dueTotal} 題、還沒練過 ${pick.freshTotal} 題（共 ${d.pqs.length} 題）${pend ? `；${pend} 題翻譯等待批改` : ""}`
-					: "這個題庫還沒有題目。先到主畫面匯入文章並出題。",
-			);
+			if (pend) list.createDiv({ cls: "el-muted", text: `${pend} 題翻譯等待批改（連上網路開始練習時會自動批改）` });
 		} catch (e) {
-			stats.setText(`讀取失敗：${(e as Error)?.message ?? e}`);
+			list.empty();
+			list.createDiv({ cls: "el-warn", text: `讀取失敗：${(e as Error)?.message ?? e}` });
 		}
 	}
 
@@ -219,10 +246,10 @@ export class PracticeView extends ItemView {
 	}
 
 	// ---- 開始 ----
-	private async start(sync: boolean) {
+	private async start(type: QType) {
 		const p = this.plugin;
 		const prefs = this.prefs();
-		if (sync) {
+		if (prefs.sync) {
 			this.setBusy("同步中…（下載其他裝置的進度）");
 			const ok = await p.syncAndWait((s) => {
 				this.busyText = s;
@@ -232,25 +259,25 @@ export class PracticeView extends ItemView {
 		}
 		this.setBusy("準備題目…");
 		const d = await loadPractice(this.app, p.user, prefs.level);
-
-		// 背景批改之前離線時的翻譯
 		this.gradePendingInBackground(d.logs);
 
-		const pick = pickSession(d.pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
-		const byId = new Map(d.pqs.map((x) => [x.q.id, x]));
+		const pqs = d.pqs.filter((x) => x.q.type === type);
+		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size);
+		const byId = new Map(pqs.map((x) => [x.q.id, x]));
 		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
 		if (!this.items.length) {
 			this.phase = "start";
 			this.drawStart();
-			new Notice(d.pqs.length ? "今天沒有到期的題目了，明天再來！" : "還沒有題目，先匯入文章並出題");
+			new Notice(`「${TYPE_LABEL[type]}」今天沒有到期的題目了，明天再來！`);
 			return;
 		}
+		this.sessionType = type;
 		this.sessionId = uuid();
 		this.idx = 0;
 		this.results = [];
 		this.requeued.clear();
 		this.phase = "question";
-		p.debug(`practice start user=${p.user} items=${this.items.length} (due ${pick.due.length}, new ${pick.fresh.length})`);
+		p.debug(`practice start user=${p.user} type=${type} items=${this.items.length} (due ${pick.due.length}, new ${pick.fresh.length})`);
 		this.drawQuestion();
 	}
 
@@ -277,12 +304,87 @@ export class PracticeView extends ItemView {
 		if (done) new Notice(`已批改 ${done} 題之前離線時的翻譯`);
 	}
 
+	// ---- 中文翻譯按鈕 ----
+
+	/** 取得翻譯：題庫已有就用，沒有就即時翻譯（會快取在這台裝置）。 */
+	private async zhFor(texts: string[], given?: (string | undefined)[]): Promise<string[]> {
+		if (given && given.length === texts.length && given.every(Boolean)) return given as string[];
+		const cached = texts.map((t) => cachedZh(this.app, t));
+		if (cached.every(Boolean)) return cached as string[];
+		if (!navigator.onLine) throw new Error("這份題庫沒有內建翻譯，需要連上網路才能翻譯");
+		return translateMany(this.app, this.plugin.backend(), texts);
+	}
+
+	/** 在 parent 裡加一個「中」按鈕；按下後在 target 顯示翻譯。作答前按下算看提示。 */
+	private zhButton(parent: HTMLElement, target: HTMLElement, get: () => Promise<string> | string, countsAsHint = true) {
+		const btn = parent.createEl("button", { cls: "el-zh-btn", text: "中" });
+		const box = target.createDiv({ cls: "el-zh" });
+		box.style.display = "none";
+		let loaded = false;
+		btn.onclick = async (e) => {
+			e.stopPropagation();
+			if (box.style.display !== "none") {
+				box.style.display = "none";
+				btn.removeClass("is-on");
+				return;
+			}
+			if (countsAsHint && !this.answered) this.hintUsed = true;
+			box.style.display = "";
+			btn.addClass("is-on");
+			if (loaded) return;
+			box.setText("翻譯中…");
+			try {
+				box.setText(await get());
+				loaded = true;
+			} catch (err) {
+				box.setText(`無法翻譯：${(err as Error)?.message ?? err}`);
+			}
+		};
+	}
+
+	/** 一行英文（可點擊朗讀）＋「中」按鈕＋翻譯區。 */
+	private sentence(parent: HTMLElement, text: string, zh: string | undefined, cls = "el-sentence") {
+		const wrap = parent.createDiv({ cls: "el-line-wrap" });
+		const line = wrap.createDiv({ cls: "el-line" });
+		line.createSpan({ cls: `el-say ${cls}`, text });
+		this.zhButton(line, wrap, async () => (await this.zhFor([text], [zh]))[0]);
+	}
+
+	/** 選項的中文：一個按鈕切換全部選項下方的中文。 */
+	private optionsZhButton(parent: HTMLElement, q: ChoiceQ, buttons: HTMLButtonElement[]) {
+		const english = q.type !== "vocab" || q.direction === "zh2en";
+		if (!english) return;
+		const row = parent.createDiv({ cls: "el-row el-opts-zh-row" });
+		row.createSpan({ cls: "el-muted", text: "選項中文" });
+		const holder = row.createDiv();
+		holder.style.display = "none";
+		this.zhButton(row, holder, async () => {
+			const zh = await this.zhFor(q.options, q.optionsZh);
+			buttons.forEach((b, i) => {
+				let span = b.querySelector(".el-opt-zh") as HTMLElement | null;
+				if (!span) span = b.createDiv({ cls: "el-opt-zh" });
+				span.setText(zh[i] ?? "");
+			});
+			return "";
+		});
+		// 第二次按「中」時切換顯示
+		const btn = row.querySelector(".el-zh-btn") as HTMLButtonElement;
+		btn.addEventListener("click", () => {
+			const on = btn.hasClass("is-on");
+			buttons.forEach((b) => {
+				const span = b.querySelector(".el-opt-zh") as HTMLElement | null;
+				if (span) span.style.display = on ? "" : "none";
+			});
+		});
+	}
+
 	// ---- 出題 ----
 	private drawQuestion() {
 		const el = this.root();
 		const pq = this.items[this.idx];
 		const q = pq.q;
 		this.answered = false;
+		this.hintUsed = false;
 
 		const top = el.createDiv({ cls: "el-row el-top" });
 		const realTotal = this.items.filter((x) => !x.relearn).length;
@@ -299,28 +401,44 @@ export class PracticeView extends ItemView {
 
 		const cq = q as ChoiceQ;
 		if (cq.type === "vocab" && cq.direction !== "zh2en") {
-			const w = card.createDiv({ cls: "el-qword" });
+			const wrap = card.createDiv({ cls: "el-line-wrap" });
+			const w = wrap.createDiv({ cls: "el-qword el-line" });
 			w.createSpan({ cls: "el-say", text: cq.prompt });
-			if (cq.ipa) w.createSpan({ cls: "el-ipa", text: `  ${cq.ipa}` });
-			if (cq.context) card.createDiv({ cls: "el-say el-sentence el-context", text: cq.context });
+			if (cq.ipa) w.createSpan({ cls: "el-ipa", text: ` ${cq.ipa}` });
+			this.zhButton(w, wrap, () => cq.options[cq.answer]); // 單字的中文就是答案
+			if (cq.context) this.sentence(card, cq.context, cq.contextZh, "el-sentence el-context");
 			card.createDiv({ cls: "el-muted", text: "選出在這句裡的意思" });
 		} else if (cq.type === "vocab") {
 			card.createDiv({ cls: "el-qword", text: cq.prompt });
 			card.createDiv({ cls: "el-muted", text: "選出對應的英文" });
 		} else if (cq.type === "cloze") {
-			card.createDiv({ cls: "el-qtext", text: cq.prompt });
+			const full = cq.prompt.replace("____", cq.options[cq.answer]);
+			const wrap = card.createDiv({ cls: "el-line-wrap" });
+			const line = wrap.createDiv({ cls: "el-line el-qtext" });
+			line.createSpan({ text: cq.prompt });
+			this.zhButton(line, wrap, async () => (await this.zhFor([full], [cq.promptZh]))[0]);
 		} else {
-			card.createDiv({ cls: "el-qtext", text: cq.prompt });
+			const wrap = card.createDiv({ cls: "el-line-wrap" });
+			const line = wrap.createDiv({ cls: "el-line el-qtext" });
+			line.createSpan({ cls: "el-say", text: cq.prompt });
+			this.zhButton(line, wrap, async () => (await this.zhFor([cq.prompt], [cq.promptZh]))[0]);
 			this.articleToggle(card, pq.bank);
 		}
 
 		const opts = card.createDiv({ cls: "el-opts" });
 		const buttons: HTMLButtonElement[] = [];
 		cq.options.forEach((o, i) => {
-			const b = opts.createEl("button", { cls: "el-opt", text: `${"ABCD"[i]}. ${o}` });
+			const b = opts.createEl("button", { cls: "el-opt" });
+			b.createDiv({ text: `${"ABCD"[i]}. ${o}` });
 			buttons.push(b);
 			b.onclick = () => this.answerChoice(card, pq, cq, i, buttons);
 		});
+		this.optionsZhButton(card, cq, buttons);
+		const idk = card.createEl("button", { cls: "el-idk", text: "我不知道" });
+		idk.onclick = () => {
+			idk.disabled = true;
+			this.answerChoice(card, pq, cq, -1, buttons);
+		};
 	}
 
 	private articleToggle(card: HTMLElement, bank: Bank) {
@@ -334,30 +452,38 @@ export class PracticeView extends ItemView {
 			const f = this.app.vault.getAbstractFileByPath(bank.sourcePath);
 			if (!(f instanceof TFile)) return body.setText("找不到文章（可能還沒同步）");
 			const text = stripMarks(stripFrontmatter(await this.app.vault.cachedRead(f)));
-			for (const para of text.split(/\n\s*\n|\n/).map((s) => s.trim()).filter(Boolean)) body.createEl("p", { text: para });
+			for (const para of text.split(/\n/).map((s) => s.trim()).filter(Boolean)) {
+				const wrap = body.createDiv({ cls: "el-line-wrap el-para" });
+				const line = wrap.createDiv({ cls: "el-line" });
+				line.createSpan({ text: para });
+				this.zhButton(line, wrap, async () => (await this.zhFor([para]))[0]);
+			}
 		});
 	}
 
 	private async answerChoice(card: HTMLElement, pq: PQ, q: ChoiceQ, choice: number, buttons: HTMLButtonElement[]) {
 		if (this.answered) return;
 		this.answered = true;
+		const dontKnow = choice < 0;
 		const correct = choice === q.answer;
 		buttons.forEach((b, i) => {
 			b.disabled = true;
 			if (i === q.answer) b.addClass("el-ok-opt");
 			else if (i === choice) b.addClass("el-bad-opt");
 		});
-		this.record(pq, { correct, choice });
+		card.querySelectorAll(".el-idk").forEach((b) => ((b as HTMLButtonElement).disabled = true));
+		this.record(pq, { correct, choice: dontKnow ? undefined : choice, dontKnow, hint: this.hintUsed });
 
 		const fb = card.createDiv({ cls: `el-feedback ${correct ? "is-ok" : "is-bad"}` });
-		fb.createDiv({ cls: "el-verdict", text: correct ? "✓ 答對了" : `✗ 正確答案是 ${"ABCD"[q.answer]}. ${q.options[q.answer]}` });
+		const verdict = correct ? (this.hintUsed ? "✓ 答對了（看過中文，這次不拉長間隔）" : "✓ 答對了") : `${dontKnow ? "答案是" : "✗ 正確答案是"} ${"ABCD"[q.answer]}. ${q.options[q.answer]}`;
+		fb.createDiv({ cls: "el-verdict", text: verdict });
 		if (q.type === "vocab" && q.direction === "zh2en" && q.word) {
 			const w = fb.createDiv({ cls: "el-qword-small" });
 			w.createSpan({ cls: "el-say", text: q.word });
-			if (q.ipa) w.createSpan({ cls: "el-ipa", text: `  ${q.ipa}` });
-			if (q.context) fb.createDiv({ cls: "el-say el-sentence", text: q.context });
+			if (q.ipa) w.createSpan({ cls: "el-ipa", text: ` ${q.ipa}` });
+			if (q.context) this.sentence(fb, q.context, q.contextZh);
 		}
-		if (q.type === "cloze") fb.createDiv({ cls: "el-say el-sentence", text: q.prompt.replace("____", q.options[q.answer]) });
+		if (q.type === "cloze") this.sentence(fb, q.prompt.replace("____", q.options[q.answer]), q.promptZh);
 		if (q.explanation) fb.createDiv({ cls: "el-explain", text: q.explanation });
 		this.nextButton(card);
 	}
@@ -368,14 +494,14 @@ export class PracticeView extends ItemView {
 		const ta = card.createEl("textarea", { cls: "el-textarea el-answer", attr: { rows: "3", autocapitalize: "sentences", placeholder: "Type your English here" } });
 		const row = card.createDiv({ cls: "el-row el-big-buttons" });
 		const send = row.createEl("button", { text: "送出", cls: "mod-cta" });
-		const giveUp = row.createEl("button", { text: "不會，看答案" });
+		const giveUp = row.createEl("button", { text: "我不知道" });
 		const out = card.createDiv();
 
-		const finish = (res: { correct?: boolean; pending?: boolean; score?: number; feedback?: string; corrected?: string }, text: string) => {
+		const finish = (res: { correct?: boolean; pending?: boolean; score?: number; feedback?: string; corrected?: string; dontKnow?: boolean }, text: string) => {
 			ta.disabled = true;
 			send.disabled = true;
 			giveUp.disabled = true;
-			this.record(pq, { correct: res.correct, pending: res.pending, text, score: res.score, feedback: res.feedback, corrected: res.corrected });
+			this.record(pq, { correct: res.correct, pending: res.pending, text, score: res.score, feedback: res.feedback, corrected: res.corrected, dontKnow: res.dontKnow });
 			const ok = res.correct === true;
 			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : ok ? "is-ok" : "is-bad"}` });
 			if (res.pending) fb.createDiv({ cls: "el-verdict", text: "已記錄，之後連上網路會自動批改" });
@@ -395,7 +521,7 @@ export class PracticeView extends ItemView {
 		giveUp.onclick = () => {
 			if (this.answered) return;
 			this.answered = true;
-			finish({ correct: false }, "");
+			finish({ correct: false, dontKnow: true }, "");
 		};
 		send.onclick = async () => {
 			const text = ta.value.trim();
@@ -415,7 +541,10 @@ export class PracticeView extends ItemView {
 		};
 	}
 
-	private record(pq: PQ, r: { correct?: boolean; choice?: number; pending?: boolean; text?: string; score?: number; feedback?: string; corrected?: string }) {
+	private record(
+		pq: PQ,
+		r: { correct?: boolean; choice?: number; pending?: boolean; text?: string; score?: number; feedback?: string; corrected?: string; hint?: boolean; dontKnow?: boolean },
+	) {
 		const p = this.plugin;
 		const extra: Record<string, unknown> = {
 			qid: pq.q.id,
@@ -430,6 +559,8 @@ export class PracticeView extends ItemView {
 		if (r.feedback) extra.feedback = r.feedback;
 		if (r.corrected) extra.corrected = r.corrected;
 		if (r.pending) extra.pending = true;
+		if (r.hint) extra.hint = true;
+		if (r.dontKnow) extra.dontKnow = true;
 		if (pq.relearn) extra.relearn = true;
 		if (pq.marked) extra.marked = true;
 		p.appendLog(p.makeEntry("answer", extra)).catch((e) => new Notice(`寫入紀錄失敗：${(e as Error)?.message ?? e}`));
@@ -458,7 +589,7 @@ export class PracticeView extends ItemView {
 	private finish() {
 		this.phase = "done";
 		const el = this.root();
-		el.createEl("h3", { text: "練習結果" });
+		el.createEl("h3", { text: `練習結果：${TYPE_LABEL[this.sessionType]}` });
 		const graded = this.results.filter((r) => r.correct !== undefined);
 		const right = graded.filter((r) => r.correct).length;
 		const pend = this.results.filter((r) => r.pending).length;
@@ -472,8 +603,10 @@ export class PracticeView extends ItemView {
 			for (const r of wrong) {
 				const q = r.pq.q;
 				const li = ul.createEl("li");
-				if (q.type === "vocab" && q.word) li.createSpan({ cls: "el-say", text: q.word });
-				else li.createSpan({ text: q.type === "translate" ? q.prompt : q.prompt.slice(0, 80) });
+				if (q.type === "vocab" && q.word) {
+					li.createSpan({ cls: "el-say", text: q.word });
+					li.createSpan({ cls: "el-muted", text: `　${q.direction === "zh2en" ? q.prompt : q.options[q.answer]}` });
+				} else li.createSpan({ text: q.type === "translate" ? q.prompt : q.prompt.slice(0, 80) });
 			}
 		}
 
@@ -493,14 +626,12 @@ export class PracticeView extends ItemView {
 					end.disabled = false;
 				}
 			};
-			const again = r.createEl("button", { text: "再練一輪" });
+			const again = r.createEl("button", { text: "換一種題型" });
 			again.onclick = () => {
 				this.phase = "start";
 				this.drawStart();
 			};
 		});
-		this.plugin.debug(`practice end right=${right}/${graded.length} pending=${pend}`);
+		this.plugin.debug(`practice end type=${this.sessionType} right=${right}/${graded.length} pending=${pend}`);
 	}
 }
-
-export { LEVEL_LABEL, PASS };

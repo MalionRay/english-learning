@@ -6,6 +6,7 @@
 // - 依時間戳排序後依序重播；時間相同時用 UUID 排序，確保順序固定
 // - 答對：往間隔階梯的下一格；答錯：回到第一格（隔天再出）
 // - 同一場練習中答錯後的「重答」（relearn）不改變排程，只算練習
+// - 作答前看了中文翻譯（hint）而答對：階梯不動，隔天再出
 // - 翻譯題在批改前（pending）視為隔天到期；批改結果是另一筆 grade log，對應 answerId
 import type { QType } from "./generate";
 
@@ -35,6 +36,8 @@ export interface AnswerLog {
 	corrected?: string;
 	pending?: boolean; // 翻譯題尚未批改
 	relearn?: boolean; // 同一場練習答錯後重答
+	hint?: boolean; // 作答前看了中文翻譯：答對也只算練習，不升級
+	dontKnow?: boolean; // 按了「我不知道」（視為答錯）
 	marked?: boolean;
 }
 
@@ -106,6 +109,11 @@ export function computeStates(entries: (AnswerLog | GradeLog)[], markedQids: Set
 		else st.wrong++;
 		if (a.relearn) continue; // 同場重答不改排程，也不覆蓋「上次排程時答對與否」
 		st.lastCorrect = correct;
+		if (correct && a.hint) {
+			// 看了提示才答對：階梯不動，明天再確認一次
+			st.due = t + DAY - EARLY;
+			continue;
+		}
 
 		const marked = a.marked || markedQids.has(a.qid);
 		if (correct) {
