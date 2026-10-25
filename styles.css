@@ -62,3 +62,6 @@
 .el-hints { margin: 4px 0; }
 .el-practice input.el-cloze-input { width: 100%; font-size: 1.2em; padding: 10px 12px; height: auto; margin: 10px 0 4px; }
 .el-practice input.el-size-input { width: 5em; }
+.el-practice .el-user-badge { font-weight: 600; padding: 1px 10px; border-radius: 10px; background: var(--interactive-accent); color: var(--text-on-accent); }
+.el-practice .el-flag { cursor: pointer; color: var(--text-muted); margin-left: 12px; }
+.el-flag-link { cursor: pointer; display: block; margin-top: 4px; }

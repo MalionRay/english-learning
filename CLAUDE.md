@@ -47,7 +47,14 @@
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
 - 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
 - 「我不知道」→ correct: false、dontKnow: true
+- 回報有問題的題目：type "flag"／"unflag"（src/flags.ts），讀所有使用者的 log 依時間重播；被回報的題目對所有人不出題，主畫面可恢復
+- 練習畫面頂端一直顯示目前使用者（共用 iPad 避免記錯人）
+- 同步：若自動同步正在跑，先等它結束再觸發一次
 - 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint
+
+## 備份（src/backup.ts）
+- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
+- 還原目前是手動：從 JSON 的 files 取出內容寫回原路徑
 
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js

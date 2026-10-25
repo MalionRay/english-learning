@@ -19,6 +19,7 @@ import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
 import { Pronouncer, PronounceSource, loadQuota, unlockAudio } from "./pronounce";
 import { PRACTICE_VIEW, PracticeView } from "./practice";
+import { backupNow, maybeAutoBackup } from "./backup";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
 declare const PLUGIN_VERSION: string;
@@ -61,6 +62,16 @@ export default class EnglishLearningPlugin extends Plugin {
 			}),
 		);
 		this.app.workspace.onLayoutReady(() => this.pronouncer.rebuildIndex());
+		// 每週自動備份一次（等 1 分鐘，讓啟動時的同步先跑完）
+		this.app.workspace.onLayoutReady(() => {
+			const t = window.setTimeout(() => {
+				maybeAutoBackup(this.app, this.deviceId)
+					.then((r) => r && this.debug(`auto backup ${r.path}: ${r.files} files, ${Math.round(r.bytes / 1024)} KB`))
+					.catch((e) => this.debug(`auto backup failed: ${errMsg(e)}`));
+			}, 60_000);
+			this.register(() => window.clearTimeout(t));
+		});
+		this.addCommand({ id: "backup", name: "立即備份", callback: () => this.backup() });
 
 		const touch = () => (this.lastVaultEvent = Date.now());
 		this.registerEvent(this.app.vault.on("create", touch));
@@ -375,10 +386,17 @@ export default class EnglishLearningPlugin extends Plugin {
 		}
 		const rs = (this.app as unknown as { plugins?: { plugins?: Record<string, { isSyncing?: boolean }> } }).plugins?.plugins?.["remotely-save"];
 		const started = Date.now();
-		const ok = await this.triggerSync(true);
-		if (!ok) return false;
 		const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 		const secs = () => Math.round((Date.now() - started) / 1000);
+		// 如果自動同步正在跑，先等它結束：它可能沒包含剛寫入的紀錄，所以結束後再同步一次
+		if (rs?.isSyncing) {
+			while (rs.isSyncing && Date.now() - started < maxMs) {
+				onStatus?.(`等待進行中的同步…（${secs()} 秒）`);
+				await sleep(300);
+			}
+		}
+		const ok = await this.triggerSync(true);
+		if (!ok) return false;
 		if (rs && typeof rs.isSyncing === "boolean") {
 			// 等它開始（最多 3 秒），再等它結束
 			while (!rs.isSyncing && Date.now() - started < 3000) await sleep(100);
@@ -398,6 +416,16 @@ export default class EnglishLearningPlugin extends Plugin {
 		}
 		this.debug(`syncAndWait done in ${secs()}s (quiet heuristic)`);
 		return true;
+	}
+
+	async backup(): Promise<void> {
+		try {
+			const r = await backupNow(this.app, this.deviceId);
+			new Notice(`已備份 ${r.files} 個檔案（${Math.round(r.bytes / 1024)} KB）到 ${r.path}`, 6000);
+			this.debug(`manual backup ${r.path}`);
+		} catch (e) {
+			this.fail("備份", e);
+		}
 	}
 
 	// ---------- 除錯（iOS 沒有 DevTools，寫進 Vault；每台裝置一個檔） ----------
