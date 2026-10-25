@@ -22,6 +22,7 @@ export interface Settings {
 	ttsModel: string;
 	ttsVoice: string;
 	ttsDailyCap: number; // 每台裝置每天最多產生幾段 Gemini 語音
+	prefetchAudio: boolean; // 出題後預先產生錄音
 }
 
 export const DEFAULTS: Settings = {
@@ -35,4 +36,5 @@ export const DEFAULTS: Settings = {
 	ttsModel: "gemini-3.8-flash-lite-tts",
 	ttsVoice: "Kore",
 	ttsDailyCap: 100,
+	prefetchAudio: true,
 };
