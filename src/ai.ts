@@ -27,8 +27,6 @@ export interface AIOptions {
 export interface ChatTurn {
 	role: "user" | "model";
 	text: string;
-	/** 附加的音訊（base64），例如口說評分的錄音 */
-	audio?: { mime: string; data: string };
 }
 
 export interface AIBackend {
@@ -61,10 +59,7 @@ export class GeminiBackend implements AIBackend {
 		if (opts.json) generationConfig.responseMimeType = "application/json";
 		if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
 		const body: Record<string, unknown> = {
-			contents: turns.map((t) => ({
-				role: t.role,
-				parts: [...(t.audio ? [{ inlineData: { mimeType: t.audio.mime, data: t.audio.data } }] : []), { text: t.text }],
-			})),
+			contents: turns.map((t) => ({ role: t.role, parts: [{ text: t.text }] })),
 			generationConfig,
 		};
 		if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
