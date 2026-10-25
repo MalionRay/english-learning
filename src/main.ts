@@ -227,6 +227,13 @@ export default class EnglishLearningPlugin extends Plugin {
 		return null;
 	}
 
+	/** 口說評分用（可在設定指定支援音訊的模型）。 */
+	speakBackend(): AIBackend {
+		const key = this.getApiKey();
+		if (!key) throw new Error("尚未設定 API key（設定 → English Learning）");
+		return new GeminiBackend(key, this.settings.speakModel.trim() || this.settings.geminiModel);
+	}
+
 	backend(): AIBackend {
 		const key = this.getApiKey();
 		if (!key) throw new Error("尚未設定 API key（設定 → English Learning）");

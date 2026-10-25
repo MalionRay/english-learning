@@ -105,3 +105,4 @@
 .el-chat-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); }
 .el-chat-input textarea { flex: 1; font-size: 1.05em; min-height: 48px; }
 .el-chat-input button { min-height: 44px; padding: 0 18px; }
+.el-speak-issue { gap: 10px; margin: 4px 0; } .el-speak-issue .el-say { font-weight: 600; flex: none; }

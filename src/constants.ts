@@ -23,6 +23,7 @@ export interface Settings {
 	ttsVoice: string;
 	ttsDailyCap: number; // 每台裝置每天最多產生幾段 Gemini 語音
 	prefetchAudio: boolean; // 出題後預先產生錄音
+	speakModel: string; // 口說評分用的模型（空白＝與出題相同）
 }
 
 export const DEFAULTS: Settings = {
@@ -37,4 +38,5 @@ export const DEFAULTS: Settings = {
 	ttsVoice: "Kore",
 	ttsDailyCap: 100,
 	prefetchAudio: true,
+	speakModel: "",
 };
