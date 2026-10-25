@@ -26,7 +26,7 @@ export interface AnswerLog {
 	type: "answer";
 	qid: string;
 	bank: string; // sourceId
-	qtype: QType | "word" | "dictation" | "listening" | "phrase";
+	qtype: QType | "word" | "dictation" | "listening" | "phrase" | "speaking";
 	session: string;
 	correct?: boolean; // 選擇題；翻譯題批改後才有
 	choice?: number;
