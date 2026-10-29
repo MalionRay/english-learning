@@ -333,9 +333,9 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	// ---------- 朗讀 ----------
 	/** 必須在使用者點擊的事件裡同步呼叫（iOS 播放限制）。 */
-	say(text: string, rate?: number) {
+	say(text: string, rate?: number, opts: { noSave?: boolean } = {}) {
 		unlockAudio();
-		this.pronouncer.pronounce(text, rate ? { rate } : {}).catch((e) => {
+		this.pronouncer.pronounce(text, { ...(rate ? { rate } : {}), ...opts }).catch((e) => {
 			this.debug(`pronounce failed: ${errMsg(e)}`);
 			speak(this.app, text).catch((e2) => this.fail("朗讀", e2));
 		});

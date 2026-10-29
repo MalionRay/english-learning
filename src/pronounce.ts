@@ -97,6 +97,15 @@ export function unlockAudio() {
 	}
 }
 
+/** 停止正在播放的錄音。 */
+export function stopAudio() {
+	try {
+		player?.pause();
+	} catch {
+		/* ignore */
+	}
+}
+
 async function playBuffer(data: ArrayBuffer, mime: string, rate = 1): Promise<void> {
 	if (!player) player = new Audio();
 	if (currentUrl) URL.revokeObjectURL(currentUrl);
@@ -258,7 +267,7 @@ export class Pronouncer {
 
 	// ---- 主流程 ----
 	/** 呼叫前請先在 click handler 裡同步呼叫 unlockAudio()。 */
-	async pronounce(text: string, opts: { forceGemini?: boolean; rate?: number } = {}): Promise<PronounceSource> {
+	async pronounce(text: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean } = {}): Promise<PronounceSource> {
 		const t = normalizeSpeech(text);
 		if (!t) return "system";
 		const key = audioKey(t);
@@ -269,7 +278,7 @@ export class Pronouncer {
 		return job;
 	}
 
-	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number }): Promise<PronounceSource> {
+	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean }): Promise<PronounceSource> {
 		const rate = opts.rate ?? 1;
 		const s = this.d.settings();
 		// 1. 已存的錄音
@@ -308,9 +317,11 @@ export class Pronouncer {
 				const q = loadQuota(this.d.app);
 				q.count++;
 				saveQuota(this.d.app, q);
-				await this.save(key, "wav", wav);
-				this.d.log("gemini", { text: text.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count });
-				await playBuffer(wav, "audio/wav", rate);
+				// 先播放再存檔，少等一點；對話回覆這類一次性的句子不存（noSave）
+				const playing = playBuffer(wav, "audio/wav", rate);
+				if (!opts.noSave) await this.save(key, "wav", wav);
+				this.d.log("gemini", { text: text.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count, ...(opts.noSave ? { noSave: true } : {}) });
+				await playing;
 				return "gemini";
 			} catch (e) {
 				if (e instanceof AIError && e.status === 429) {

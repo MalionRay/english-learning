@@ -21,12 +21,23 @@ import {
 	phraseKey,
 } from "./chat";
 
+import { VOICE_TURN, parseHeard } from "./chat";
+import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
+import { primeSpeech, speak, stopSpeaking } from "./tts";
+import { stopAudio, unlockAudio } from "./pronounce";
+import type { ChatTurn } from "./ai";
 import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets } from "./chattargets";
 import { loadPractice } from "./practice";
 import type { AnswerLog } from "./srs";
 
 export const CHAT_VIEW = "english-learning-chat";
 const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article, review } }
+/** AI 回覆的朗讀方式（每台裝置各自設定）：system＝系統語音（立即）、natural＝Gemini 自然語音（慢幾秒、用每日額度）、off＝不自動朗讀。 */
+export const LS_CHAT_VOICE = "english-learning:chat-voice";
+const LS_CHAT_VOICE_LAST = "english-learning:chat-voice-last";
+export type ChatVoice = "system" | "natural" | "off";
+const HEDGE_MS = 8000; // 超過 8 秒沒回應就再送一次
+const TIMEOUT_MS = 45000;
 
 function localDate(d = new Date()): string {
 	const p = (n: number) => String(n).padStart(2, "0");
@@ -45,6 +56,7 @@ export class ChatView extends ItemView {
 	private targets: ChatTarget[] = []; // 這次對話要複習的生字與句子
 	private doneTargets = new Set<string>(); // 已在這次對話中用對的 qid
 	private targetsEl: HTMLElement | null = null;
+	private recorder: WavRecorder | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -128,6 +140,15 @@ export class ChatView extends ItemView {
 		});
 		// 讓文章選單出現在情境下面
 		el.appendChild(artRow);
+		el.createDiv({ cls: "el-row" }, (r) => {
+			r.createSpan({ text: "AI 回覆朗讀" });
+			const sel = r.createEl("select", { cls: "dropdown" });
+			sel.createEl("option", { text: "系統語音（立即）", value: "system" });
+			sel.createEl("option", { text: "自然語音（慢幾秒、用每日額度）", value: "natural" });
+			sel.createEl("option", { text: "不自動朗讀", value: "off" });
+			sel.value = this.voice();
+			sel.onchange = () => this.app.saveLocalStorage(LS_CHAT_VOICE, sel.value);
+		});
 		let review = prefs.review !== false;
 		el.createEl("label", { cls: "el-row" }, (r) => {
 			const box = r.createEl("input", { type: "checkbox" });
@@ -139,10 +160,11 @@ export class ChatView extends ItemView {
 		el.createDiv({ cls: "el-row el-big-buttons" }, (r) => {
 			const go = r.createEl("button", { text: "開始對話", cls: "mod-cta" });
 			go.onclick = () => {
+				this.primeAudio(); // 在點擊裡解鎖朗讀（iOS）
 				const all = (this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, unknown>;
-				all[p.user] = { topic: topicId, article: articlePath };
+				all[p.user] = { topic: topicId, article: articlePath, review };
 				this.app.saveLocalStorage(LS_CHAT, all);
-				this.startNew(TOPICS.find((t) => t.id === topicId) ?? TOPICS[0], topicId === "article" ? articlePath : undefined);
+				this.startNew(TOPICS.find((t) => t.id === topicId) ?? TOPICS[0], topicId === "article" ? articlePath : undefined, review);
 			};
 		});
 
@@ -164,7 +186,10 @@ export class ChatView extends ItemView {
 				open.onclick = () => this.app.workspace.getLeaf(true).openFile(f);
 				if (fm.device === p.deviceId) {
 					const cont = row.createEl("button", { text: "繼續聊", cls: "mod-cta" });
-					cont.onclick = () => this.resume(f, fm as unknown as ConvMeta);
+					cont.onclick = () => {
+						this.primeAudio();
+						this.resume(f, fm as unknown as ConvMeta, review);
+					};
 				}
 			}
 			el.createDiv({ cls: "el-muted", text: "只能在開始對話的裝置上繼續聊；在別台裝置請開新對話。" });
@@ -212,7 +237,9 @@ export class ChatView extends ItemView {
 		const path = normalizePath(`${CONV_DIR}/${base}-${n}.md`);
 		if (!(await this.app.vault.adapter.exists(CONV_DIR))) await this.app.vault.createFolder(CONV_DIR).catch(() => undefined);
 		this.file = await this.app.vault.create(path, convHeader(this.meta));
+		const t0 = Date.now();
 		await this.loadTargets(review, path);
+		p.debug(`chat start: ${this.targets.length} review targets in ${Date.now() - t0} ms`);
 		this.messages = [];
 		this.phase = "chat";
 		this.drawChat();
@@ -236,6 +263,18 @@ export class ChatView extends ItemView {
 		const top = el.createDiv({ cls: "el-row el-top" });
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-badge", text: this.topic.label });
+		const vt = top.createEl("button", { cls: "el-zh-btn", text: this.voice() === "off" ? "🔇" : "🔊", attr: { "aria-label": "自動朗讀開關" } });
+		vt.onclick = () => {
+			const next: ChatVoice = this.voice() === "off" ? this.lastVoiceOn() : "off";
+			if (next === "off") {
+				this.app.saveLocalStorage(LS_CHAT_VOICE_LAST, this.voice());
+				this.stopVoice();
+			}
+			this.app.saveLocalStorage(LS_CHAT_VOICE, next);
+			if (next !== "off") this.primeAudio();
+			vt.setText(next === "off" ? "🔇" : "🔊");
+			new Notice(next === "off" ? "AI 回覆不自動朗讀" : `AI 回覆自動朗讀（${next === "system" ? "系統語音" : "自然語音"}）`);
+		};
 		const end = top.createEl("a", { text: "結束對話", cls: "el-quit" });
 		end.onclick = () => this.end();
 		this.targetsEl = el.createDiv({ cls: "el-chat-targets" });
@@ -244,12 +283,60 @@ export class ChatView extends ItemView {
 		this.listEl = el.createDiv({ cls: "el-chat-list" });
 		const bar = el.createDiv({ cls: "el-chat-input" });
 		const ta = bar.createEl("textarea", { attr: { rows: "2", placeholder: "用英文說，或打中文問「…怎麼說」" } });
+		const mic = bar.createEl("button", { text: "🎤", cls: "el-mic", attr: { "aria-label": "用說的" } });
 		const send = bar.createEl("button", { text: "送出", cls: "mod-cta" });
 		send.onclick = () => {
 			const t = ta.value.trim();
 			if (!t || this.sending) return;
+			this.primeAudio();
 			ta.value = "";
 			this.send(t);
+		};
+		const recInfo = el.createDiv({ cls: "el-muted el-rec-info" });
+		let tick: ReturnType<typeof setInterval> | null = null;
+		const resetMic = () => {
+			if (tick) clearInterval(tick);
+			tick = null;
+			mic.setText("🎤");
+			mic.removeClass("is-recording");
+			recInfo.empty();
+			ta.disabled = send.disabled = false;
+		};
+		const finish = async (cancel = false) => {
+			const rec = this.recorder;
+			if (!rec) return;
+			this.recorder = null;
+			resetMic();
+			if (cancel) return rec.cancel();
+			const { wav, seconds } = await rec.stop();
+			if (seconds < 0.5) return void new Notice("沒有錄到聲音，再試一次");
+			await this.sendVoice(wav);
+		};
+		mic.onclick = async () => {
+			if (this.recorder) {
+				this.primeAudio(); // 說完按停止：在點擊裡解鎖朗讀
+				return finish();
+			}
+			if (this.sending) return;
+			if (!recordingSupported()) return void new Notice("這台裝置不能錄音，請用打字");
+			this.stopVoice();
+			const rec = new WavRecorder();
+			rec.onAutoStop = () => void finish();
+			try {
+				await rec.start();
+			} catch (e) {
+				return void new Notice(`無法使用麥克風：${(e as Error)?.message ?? e}`);
+			}
+			this.recorder = rec;
+			mic.setText("■ 說完了");
+			mic.addClass("is-recording");
+			ta.disabled = send.disabled = true;
+			const t0 = Date.now();
+			recInfo.empty();
+			const label = recInfo.createSpan({ text: "錄音中… 0 秒（可以英文夾中文；最長 60 秒） " });
+			const x = recInfo.createEl("a", { text: "取消" });
+			x.onclick = () => void finish(true);
+			tick = setInterval(() => label.setText(`錄音中… ${Math.round((Date.now() - t0) / 1000)} 秒（可以英文夾中文；最長 60 秒） `), 1000);
 		};
 		ta.addEventListener("keydown", (e) => {
 			// 電腦上 Enter 送出、Shift+Enter 換行（iPad 的螢幕鍵盤用送出鈕）
@@ -298,33 +385,121 @@ export class ChatView extends ItemView {
 			const um: ConvMessage = { role: "user", text, ts: new Date().toISOString() };
 			this.messages.push(um);
 			this.renderMessage(um);
-			await p.appendText(this.file, convBlock(um));
+			// 寫檔不用等（寫入佇列會照順序），先送給 AI
+			p.appendText(this.file, convBlock(um)).catch((e) => p.debug(`chat append failed: ${(e as Error)?.message ?? e}`));
 		}
+		await this.ask(historyTurns(this.messages), text, null);
+	}
+
+	/** 語音訊息：錄音直接送給 AI，AI 聽寫（heard）後照平常回覆，只呼叫一次。 */
+	private async sendVoice(wav: ArrayBuffer) {
+		if (!this.meta || !this.file || this.sending) return;
+		const bubble = this.listEl?.createDiv({ cls: "el-bubble el-bubble-user is-voice", text: "🎤 語音訊息…" }) ?? null;
+		bubble?.scrollIntoView({ block: "end" });
+		const turns: ChatTurn[] = historyTurns(this.messages);
+		const audio = { mimeType: "audio/wav", data: arrayBufferToBase64(wav) };
+		const last = turns[turns.length - 1];
+		if (last?.role === "user") {
+			last.text += `\n${VOICE_TURN}`;
+			last.media = [...(last.media ?? []), audio];
+		} else turns.push({ role: "user", text: VOICE_TURN, media: [audio] });
+		await this.ask(turns, null, bubble, Math.round((wav.byteLength - 44) / 32000));
+	}
+
+	private async ask(turns: ChatTurn[], typed: string | null, voiceBubble: HTMLElement | null, voiceSeconds = 0) {
+		const p = this.plugin;
+		if (!this.meta || !this.file) return;
+		const file = this.file;
 		this.sending = true;
-		const typing = this.listEl?.createDiv({ cls: "el-chat-typing", text: "AI 輸入中…" });
+		const t0 = Date.now();
+		const label = voiceBubble ? "AI 聽你說…" : "AI 輸入中…";
+		const typing = this.listEl?.createDiv({ cls: "el-chat-typing", text: label });
 		typing?.scrollIntoView({ block: "end" });
+		const tick = setInterval(() => {
+			const sec = Math.round((Date.now() - t0) / 1000);
+			if (sec >= 3) typing?.setText(`${label}（${sec} 秒）`);
+		}, 1000);
 		try {
-			const res = await p.backend().chat(historyTurns(this.messages), {
+			const res = await p.backend().chat(turns, {
 				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) + targetsPrompt(this.activeTargets(), this.meta.level),
 				json: true,
 				maxOutputTokens: 1024,
 				temperature: 0.7,
+				hedgeAfterMs: voiceBubble ? HEDGE_MS + 4000 : HEDGE_MS,
+				timeoutMs: TIMEOUT_MS,
 			});
+			const ms = Date.now() - t0;
 			typing?.remove();
+			let learnerText = typed;
+			if (voiceBubble) {
+				const heard = parseHeard(res.text);
+				if (!heard) {
+					voiceBubble.setText("🎤 沒聽清楚，請再說一次（或改用打字）");
+					voiceBubble.addClass("is-failed");
+					return;
+				}
+				voiceBubble.setText(`🎤 ${heard}`);
+				const um: ConvMessage = { role: "user", text: heard, ts: new Date(t0).toISOString(), voice: true };
+				this.messages.push(um);
+				p.appendText(file, convBlock(um)).catch(() => undefined);
+				learnerText = heard;
+			}
 			const mm: ConvMessage = { role: "model", text: res.text, ts: new Date().toISOString() };
 			this.messages.push(mm);
-			await p.appendText(this.file, convBlock(mm));
 			const reply = parseReply(res.text);
 			this.renderMessage(mm, reply);
+			this.speakReply(reply.reply);
+			await p.appendText(file, convBlock(mm));
 			await this.savePhrases(reply);
-			if (text !== null) await this.recordUsed(text, res.text, !!reply.correction);
-			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage })).catch(() => undefined);
+			if (learnerText !== null) await this.recordUsed(learnerText, res.text, !!reply.correction);
+			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage, ms, ...(voiceBubble ? { voice: true, seconds: voiceSeconds } : {}) })).catch(() => undefined);
+			if (ms > 8000) p.debug(`chat slow: ${ms} ms (in ${res.usage.inputTokens ?? "?"} / out ${res.usage.outputTokens ?? "?"} tokens${voiceBubble ? ", voice" : ""})`);
 		} catch (e) {
-			typing?.setText(`AI 沒有回應：${(e as Error)?.message ?? e}（可以再送一次）`);
-			p.debug(`chat failed: ${(e as Error)?.message ?? e}`);
+			typing?.setText(`AI 沒有回應：${(e as Error)?.message ?? e}（${voiceBubble ? "請再說一次" : "可以再送一次"}）`);
+			if (voiceBubble) {
+				voiceBubble.setText("🎤（沒有送出）");
+				voiceBubble.addClass("is-failed");
+			}
+			p.debug(`chat failed after ${Date.now() - t0} ms: ${(e as Error)?.message ?? e}`);
 		} finally {
+			clearInterval(tick);
 			this.sending = false;
 		}
+	}
+
+	// ---- 朗讀 ----
+	private voice(): ChatVoice {
+		const v = this.app.loadLocalStorage(LS_CHAT_VOICE);
+		return v === "natural" || v === "off" ? v : "system";
+	}
+
+	private lastVoiceOn(): ChatVoice {
+		return this.app.loadLocalStorage(LS_CHAT_VOICE_LAST) === "natural" ? "natural" : "system";
+	}
+
+	/** 必須在點擊事件裡同步呼叫：iOS 之後才允許自動播放。 */
+	private primeAudio() {
+		if (this.voice() === "off") return;
+		this.stopVoice();
+		unlockAudio();
+		primeSpeech();
+	}
+
+	private stopVoice() {
+		stopSpeaking();
+		stopAudio();
+	}
+
+	/** 唸一句英文（自動朗讀與 🔊 共用）。手動按 🔊 時，即使關了自動朗讀也會用系統語音唸。 */
+	private speakText(text: string, manual = false) {
+		const v = this.voice();
+		if (v === "natural") this.plugin.say(text, undefined, { noSave: true });
+		else if (v === "system" || manual) speak(this.app, text).catch((e) => this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`));
+	}
+
+	private speakReply(text: string) {
+		if (!text || this.voice() === "off") return;
+		this.speakText(text);
 	}
 
 	/** 糾正與「怎麼說」都記進句子本（同一句不重複）。 */
@@ -342,7 +517,7 @@ export class ChatView extends ItemView {
 		const list = this.listEl;
 		if (!list) return;
 		if (m.role === "user") {
-			list.createDiv({ cls: "el-bubble el-bubble-user", text: m.text });
+			list.createDiv({ cls: `el-bubble el-bubble-user${m.voice ? " is-voice" : ""}`, text: m.voice ? `🎤 ${m.text}` : m.text });
 		} else {
 			const r = reply ?? parseReply(m.text);
 			if (r.correction) {
@@ -386,7 +561,9 @@ export class ChatView extends ItemView {
 		const say = line.createEl("button", { cls: "el-zh-btn", text: "🔊" });
 		say.onclick = (e) => {
 			e.stopPropagation();
-			this.plugin.say(text);
+			unlockAudio();
+			this.stopVoice();
+			this.speakText(text, true);
 		};
 		const zhBtn = line.createEl("button", { cls: "el-zh-btn", text: "中" });
 		const box = wrap.createDiv({ cls: "el-zh" });
@@ -425,7 +602,16 @@ export class ChatView extends ItemView {
 		menu.showAtMouseEvent(evt);
 	}
 
+	async onClose() {
+		this.recorder?.cancel();
+		this.recorder = null;
+		this.stopVoice();
+	}
+
 	private end() {
+		this.recorder?.cancel();
+		this.recorder = null;
+		this.stopVoice();
 		const fixes = this.messages.filter((m) => m.role === "model").map((m) => parseReply(m.text));
 		const nFix = fixes.filter((r) => r.correction).length;
 		const nHow = fixes.reduce((n, r) => n + r.howto.length, 0);

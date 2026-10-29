@@ -68,6 +68,21 @@ Rules:
 - All Chinese must be Traditional Chinese as used in Taiwan.${article ? `\n\n<article>\n${article}\n</article>` : ""}`;
 }
 
+/** 語音訊息：和錄音一起送出的指示。AI 要先逐字聽寫到 "heard"，再照平常的方式回覆。 */
+export const VOICE_TURN = `(The learner's message is the attached audio recording.
+First write exactly what they said into "heard": verbatim, keeping their grammar mistakes and word choices (do NOT correct them there); write any Chinese they spoke in Traditional Chinese characters; if a word is unclear, choose the most likely word from context — do not treat accent or pronunciation as a grammar mistake.
+Then reply to "heard" exactly as you would to a typed message, using the same JSON plus the "heard" field. If the audio has no speech, set "heard" to "" and reply asking them to say it again.)`;
+
+/** 語音訊息時 AI 聽到的內容。 */
+export function parseHeard(text: string): string | null {
+	try {
+		const h = JSON.parse(text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")).heard;
+		return typeof h === "string" ? h.trim() : null;
+	} catch {
+		return null;
+	}
+}
+
 /** 第一輪：請 AI 開場（不是學習者說的話）。 */
 export const OPENING = "(The learner has just opened the chat. Greet them and start the conversation according to the scenario. Use correction null and howto [].)";
 
@@ -109,8 +124,9 @@ export interface ConvMeta {
 
 export interface ConvMessage {
 	role: "user" | "model";
-	text: string; // user：原文；model：AI 回傳的原始 JSON
+	text: string; // user：原文（語音訊息是 AI 聽到的內容）；model：AI 回傳的原始 JSON
 	ts: string;
+	voice?: boolean; // 用麥克風說的
 }
 
 export function convHeader(m: ConvMeta): string {
@@ -141,7 +157,7 @@ function encodeMsg(m: ConvMessage): string {
 export function convBlock(m: ConvMessage): string {
 	const lines: string[] = [encodeMsg(m)];
 	if (m.role === "user") {
-		lines.push(`**You:** ${m.text}`, "");
+		lines.push(`**You${m.voice ? " 🎤" : ""}:** ${m.text}`, "");
 	} else {
 		const r = parseReply(m.text);
 		if (r.correction) lines.push(`> [!warning] 修正`, `> ${r.correction.original} → **${r.correction.corrected}**`, `> ${r.correction.explanation}`, "");
