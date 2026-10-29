@@ -25,3 +25,18 @@ test("看中文意思：先顯示查詢中，查到後更新", async () => {
 	await noticeMeaning(app, () => ai, "harbor"); // 第二次用快取
 	assert.equal(ob.__notices[ob.__notices.length - 1], "harbor：(n.) 港口");
 });
+
+test("看中文意思：顯示在字的旁邊，再按一次收起來", async () => {
+	const { inlineMeaning } = require("../src/translate");
+	const { app } = makeApp();
+	const line = document.createElement("div");
+	const w = document.createElement("span");
+	w.textContent = "gentle";
+	line.appendChild(w);
+	line.appendChild(document.createTextNode(" voice"));
+	const ai: any = { complete: async () => ({ text: '{"zh":["(adj.) 溫柔的"]}', usage: {}, model: "m" }) };
+	await inlineMeaning(app, () => ai, "gentle", w);
+	assert.equal(line.textContent, "gentle(adj.) 溫柔的 voice");
+	await inlineMeaning(app, () => ai, "gentle", w); // 再按一次收起來
+	assert.equal(line.textContent, "gentle voice");
+});

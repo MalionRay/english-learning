@@ -218,7 +218,7 @@ export class ELSettingTab extends PluginSettingTab {
 
 		const voiceSetting = new Setting(containerEl)
 			.setName("系統語音")
-			.setDesc("每台裝置各自設定，選了會試唸。iPad 可在「設定 → 輔助使用 → 朗讀內容 → 聲音 → 英文」下載標「高品質」的語音，下載後重開 Obsidian 才會出現。");
+			.setDesc("每台裝置各自設定，選了會試唸。注意：iPad／iPhone 上 Apple 不讓 App 內的網頁使用另外下載的高品質語音，只能選內建的聲音。");
 		voicePicker(this.app, voiceSetting.controlEl);
 		new Setting(containerEl)
 			.setName("朗讀速度")

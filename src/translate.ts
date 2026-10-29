@@ -73,3 +73,35 @@ export async function noticeMeaning(app: App, getAi: () => AIBackend, word: stri
 	}
 	setTimeout(() => n.hide(), 8000);
 }
+
+/**
+ * 點字「看中文意思」：意思直接顯示在那個字的旁邊（例如 harbor（港口））。
+ * 再按一次那個字的中文就收起來。找不到字的位置時改用提示框。
+ */
+export async function inlineMeaning(app: App, getAi: () => AIBackend, word: string, anchor: HTMLElement | null): Promise<void> {
+	if (!anchor || !anchor.parentElement) return noticeMeaning(app, getAi, word);
+	const next = anchor.nextElementSibling as HTMLElement | null;
+	if (next?.classList.contains("el-w-zh")) {
+		next.remove(); // 已經顯示：收起來
+		return;
+	}
+	const tag = document.createElement("span");
+	tag.className = "el-w-zh";
+	tag.onclick = (e) => {
+		e.stopPropagation();
+		tag.remove();
+	};
+	anchor.insertAdjacentElement("afterend", tag);
+	const cached = cachedZh(app, word);
+	if (cached) {
+		tag.textContent = cached;
+		return;
+	}
+	tag.textContent = "查詢中…";
+	try {
+		if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("沒有網路");
+		tag.textContent = (await translateMany(app, getAi(), [word]))[0] || "查不到";
+	} catch (e) {
+		tag.textContent = `無法翻譯：${(e as Error)?.message ?? e}`;
+	}
+}

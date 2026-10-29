@@ -35,11 +35,11 @@
 - 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Gemini TTS → 系統語音
 - 錄音存 english/audio/<deviceId>/<hash>.mp3|wav（單一寫入者；檔名是正規化文字的 cyrb53 雜湊），任何裝置都可讀
 - Gemini TTS 免費版每天只有 10 段（所有裝置共用，429 訊息寫 10 requests per day）：ttsDailyCap 預設 10（舊值 100 自動換掉）；預先產生錄音預設只用字典真人錄音（prefetchGemini 預設關）；對話朗讀在 ttsDailyCap ≤ 20 時整段一次產生、不切句；用完一天提醒一次並改系統語音
-- 系統語音預設挑 iOS 的 Premium（高品質）> Enhanced（優化）英文語音（voiceQuality 看 voiceURI／name）
+- 系統語音預設挑 Premium（高品質）> Enhanced（優化）英文語音（voiceQuality 看 voiceURI／name）；但 iOS WebKit 的 getVoices 不列出另外下載的高品質語音（2026-10-30 iPad 實測 Ava、Zoe 下載後沒出現；Apple 論壇證實），所以 iPad 只有內建語音
 - Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；429 內容提到 per day 才當天停用，其他 429（每分鐘上限）只暫停 60 秒；預先產生錄音遇到每分鐘上限或對話正在用語音（speakNatural 後 5 分鐘）會等 30 秒再試；設定有每日上限
 - 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）；選單（tts.voicePicker，設定頁與對話開始畫面都有）高品質排前面、選了直接用系統語音試唸
-- 點字「看中文意思」用 translate.noticeMeaning：先顯示「查詢中…」再更新同一個 Notice；translateMany 有 hedge 6 秒、逾時 25 秒
+- 點字「看中文意思」用 translate.inlineMeaning：意思顯示在字的旁邊（span.el-w-zh，先「查詢中…」，再按一次收起來；找不到字的位置才用 noticeMeaning 提示框）；translateMany 有 hedge 6 秒、逾時 25 秒
 
 ## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
 - 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）
