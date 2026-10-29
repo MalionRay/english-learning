@@ -428,7 +428,7 @@ export class ChatView extends ItemView {
 			if (sec >= 3) typing?.setText(`${label}（${sec} 秒）`);
 		}, 1000);
 		try {
-			const res = await p.backend().chat(turns, {
+			const res = await p.fastBackend().chat(turns, {
 				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) + targetsPrompt(this.activeTargets(), this.meta.level),
 				json: true,
 				maxOutputTokens: 1024,
@@ -601,7 +601,7 @@ export class ChatView extends ItemView {
 			box.setText(zh ?? cachedZh(this.app, text) ?? "翻譯中…");
 			if (!zh && !cachedZh(this.app, text)) {
 				try {
-					box.setText((await translateMany(this.app, this.plugin.backend(), [text]))[0]);
+					box.setText((await translateMany(this.app, this.plugin.fastBackend(), [text]))[0]);
 				} catch (err) {
 					box.setText(`無法翻譯：${(err as Error)?.message ?? err}`);
 				}
@@ -615,7 +615,7 @@ export class ChatView extends ItemView {
 		menu.addItem((i) =>
 			i.setTitle("看中文意思").onClick(async () => {
 				try {
-					new Notice(`${word}：${cachedZh(this.app, word) ?? (await translateMany(this.app, this.plugin.backend(), [word]))[0]}`, 8000);
+					new Notice(`${word}：${cachedZh(this.app, word) ?? (await translateMany(this.app, this.plugin.fastBackend(), [word]))[0]}`, 8000);
 				} catch (e) {
 					new Notice(`無法翻譯：${(e as Error)?.message ?? e}`);
 				}

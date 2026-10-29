@@ -23,14 +23,15 @@ test("速度測試：每一步都有結果，失敗也記下來", async () => {
 				return { text: "{}", usage: { outputTokens: 50 }, model: m };
 			},
 		}) as any;
-	const rows = await runSpeedTest("k", "m1", () => undefined, backend, { model: "tts", bench: async () => ({ ms: 5, decodeMs: 1, bytes: 10 }) });
+	const rows = await runSpeedTest("k", "m1", () => undefined, backend, { model: "tts", bench: async () => ({ ms: 5, decodeMs: 1, bytes: 10 }) }, "fast1");
 	assert.deepEqual(rows.map((r) => [r.label, r.model, r.ok]), [
 		["網路來回（列出模型）", "-", true],
 		["最短的生成", "m1", true],
 		["對話大小（第 1 次）", "m1", true],
 		["對話大小（第 2 次）", "m1", true],
-		["對話＋thinkingLevel minimal", "m1", true],
 		["對話＋thinkingConfig minimal", "m1", false],
+		["對話大小（快速模型）", "fast1", true],
+		["對話大小（快速模型，第 2 次）", "fast1", true],
 		["對話大小", "gemini-9-flash", true],
 		["自然語音（解碼 0.0 秒）", "tts", true],
 	]);

@@ -28,3 +28,25 @@ test("沒有網路", async () => {
 	});
 	await assert.rejects(new GeminiBackend("k", "net-model").complete("hi"), (e: AIError) => e.kind === "network");
 });
+
+test("快速模型不能用時改用主要模型", async () => {
+	const { AIError: E, FallbackBackend } = require("../src/ai");
+	const mk = (model: string, fail?: string) => ({
+		id: "x",
+		model,
+		complete: async () => {
+			if (fail) throw new E("x", 404, "", fail);
+			return { text: model, usage: {}, model };
+		},
+		chat: async () => {
+			if (fail) throw new E("x", 404, "", fail);
+			return { text: model, usage: {}, model };
+		},
+	});
+	const used: string[] = [];
+	assert.equal((await new FallbackBackend(mk("fast", "model"), mk("main"), (e: any) => used.push(e.kind)).complete("hi")).text, "main");
+	assert.equal((await new FallbackBackend(mk("fast", "daily"), mk("main")).chat([])).text, "main");
+	assert.equal((await new FallbackBackend(mk("fast"), mk("main")).chat([])).text, "fast");
+	await assert.rejects(new FallbackBackend(mk("fast", "auth"), mk("main")).complete("hi")); // API key 錯就不用再試
+	assert.deepEqual(used, ["model"]);
+});

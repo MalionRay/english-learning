@@ -14,6 +14,7 @@ export interface Settings {
 	users: string[];
 	backend: "gemini";
 	geminiModel: string;
+	fastModel: string; // 對話、批改、翻譯這類要即時回應的呼叫（空白＝跟 geminiModel 一樣）
 	apiKeySecretName: string; // SecretStorage 裡的 secret 名稱，不是金鑰本身
 	syncAfterGenerate: boolean;
 	// 發音
@@ -30,6 +31,8 @@ export const DEFAULTS: Settings = {
 	users: ["ray", "kid"],
 	backend: "gemini",
 	geminiModel: "gemini-3.5-flash-lite",
+	// iPad 實測（2026-10-29）：3.5-flash-lite 的對話大小請求要 22～25 秒，3.1-flash-lite-preview 約 1.6 秒
+	fastModel: "gemini-3.1-flash-lite-preview",
 	apiKeySecretName: "",
 	syncAfterGenerate: true,
 	dictAudio: true,

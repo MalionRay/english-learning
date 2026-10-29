@@ -304,6 +304,23 @@ export class Pronouncer {
 		return job;
 	}
 
+	private ttsPauseUntil = 0; // 每分鐘上限：暫停到這個時間
+	private interactiveUntil = 0; // 對話正在用語音：背景預先產生先讓路
+
+	/** Gemini 語音收到 429：每日額度用完回傳 true（當天停用）；每分鐘上限只暫停一分鐘。 */
+	private hit429(e: AIError): boolean {
+		const daily = /per ?day|PerDay|daily/i.test(`${e.body ?? ""} ${e.message}`);
+		if (daily) {
+			const q = loadQuota(this.d.app);
+			q.exhausted = true;
+			saveQuota(this.d.app, q);
+		} else {
+			this.ttsPauseUntil = Date.now() + 60_000;
+			this.d.debug("gemini tts: per-minute limit, pausing 60 s");
+		}
+		return daily;
+	}
+
 	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean }): Promise<PronounceSource> {
 		const rate = opts.rate ?? 1;
 		const s = this.d.settings();
@@ -351,10 +368,7 @@ export class Pronouncer {
 				return "gemini";
 			} catch (e) {
 				if (e instanceof AIError && e.status === 429) {
-					const q = loadQuota(this.d.app);
-					q.exhausted = true;
-					saveQuota(this.d.app, q);
-					this.d.notice("今天的 Gemini 語音免費額度已用完，改用系統語音（台灣時間下午 3～4 點重置）");
+					if (this.hit429(e)) this.d.notice("今天的 Gemini 語音免費額度已用完，改用系統語音（台灣時間下午 3～4 點重置）");
 					this.d.log("gemini", { ok: false, status: 429 });
 				} else {
 					this.d.debug(`gemini tts failed: ${(e as Error)?.message ?? e}${e instanceof AIError && e.body ? ` body=${e.body}` : ""}`);
@@ -370,7 +384,7 @@ export class Pronouncer {
 	 * 預先產生用：確保這段文字有錄音（不播放、不用系統語音）。
 	 * 回傳 "cache"（已存在）、"dict"、"gemini"、"quota"（額度或上限用完）或 "none"（無法取得）。
 	 */
-	async ensure(text: string): Promise<"cache" | "dict" | "gemini" | "quota" | "none"> {
+	async ensure(text: string): Promise<"cache" | "dict" | "gemini" | "quota" | "busy" | "none"> {
 		const t = normalizeSpeech(text);
 		if (!t) return "none";
 		const key = audioKey(t);
@@ -393,6 +407,7 @@ export class Pronouncer {
 		if (!s.geminiTts) return "none";
 		const q = loadQuota(this.d.app);
 		if (q.exhausted || q.count >= s.ttsDailyCap) return "quota";
+		if (Date.now() < this.ttsPauseUntil || Date.now() < this.interactiveUntil) return "busy"; // 每分鐘上限、或對話正在用語音
 		try {
 			const wav = await this.fetchGemini(t, s);
 			const q2 = loadQuota(this.d.app);
@@ -402,12 +417,7 @@ export class Pronouncer {
 			this.d.log("gemini", { text: t.slice(0, 200), prefetch: true, bytes: wav.byteLength, todayCount: q2.count });
 			return "gemini";
 		} catch (e) {
-			if (e instanceof AIError && e.status === 429) {
-				const q3 = loadQuota(this.d.app);
-				q3.exhausted = true;
-				saveQuota(this.d.app, q3);
-				return "quota";
-			}
+			if (e instanceof AIError && e.status === 429) return this.hit429(e) ? "quota" : "busy";
 			this.d.debug(`prefetch gemini failed: ${(e as Error)?.message ?? e}`);
 			return "none";
 		}
@@ -419,7 +429,7 @@ export class Pronouncer {
 
 	private quotaOk(s: PronounceSettings): boolean {
 		const q = loadQuota(this.d.app);
-		if (q.exhausted) return false;
+		if (q.exhausted || Date.now() < this.ttsPauseUntil) return false;
 		if (q.count >= s.ttsDailyCap) {
 			if (!this.warnedExhausted) {
 				this.warnedExhausted = true;
@@ -470,6 +480,7 @@ export class Pronouncer {
 	async speakNatural(text: string, isStopped: () => boolean = () => false): Promise<boolean> {
 		const s = this.d.settings();
 		const parts = splitForSpeech(normalizeSpeech(text));
+		this.interactiveUntil = Date.now() + 5 * 60_000;
 		if (!parts.length || !s.geminiTts || !this.quotaOk(s)) return false;
 		const jobs = parts.map((t) =>
 			this.fetchGemini(t, s).then(
@@ -481,11 +492,7 @@ export class Pronouncer {
 					return wav;
 				},
 				(e) => {
-					if (e instanceof AIError && e.status === 429) {
-						const q = loadQuota(this.d.app);
-						q.exhausted = true;
-						saveQuota(this.d.app, q);
-					}
+					if (e instanceof AIError && e.status === 429) this.hit429(e);
 					this.d.debug(`natural speech failed: ${(e as Error)?.message ?? e}`);
 					return null;
 				},
