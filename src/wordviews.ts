@@ -4,7 +4,7 @@ import type EnglishLearningPlugin from "./main";
 import { TYPE_LABEL } from "./generate";
 import { loadPractice } from "./practice";
 import { computeStats, wordQid } from "./words";
-import { phraseQid } from "./chat";
+import { PHRASE_SOURCE_LABEL, phraseQid } from "./chat";
 import type { AnswerLog, GradeLog } from "./srs";
 import { PatternModal } from "./patternview";
 
@@ -252,7 +252,7 @@ export class PhrasesView extends ItemView {
 		header(el, "句子本", p, () => this.render());
 		const d = await loadPractice(this.app, p.user, "all");
 		const items = d.phrases;
-		el.createDiv({ cls: "el-muted", text: `共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法。到「練習 → 句子」可以複習。` });
+		el.createDiv({ cls: "el-muted", text: `共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法、錯誤分析的練習句，以及答錯的克漏字、翻譯、聽力句子。到「練習 → 句子」可以複習，英文對話也會自然用到到期的句子。` });
 		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: "搜尋中文或英文" } });
 		search.value = this.filter;
 		const list = el.createDiv();
@@ -264,13 +264,13 @@ export class PhrasesView extends ItemView {
 			for (const x of shown) {
 				const st = d.states.get(phraseQid(x.key));
 				const card = list.createDiv({ cls: "el-card el-word-card" });
-				card.createDiv({ cls: "el-title", text: x.zh });
+				card.createDiv({ cls: "el-title", text: x.zh || "（中文會在練習時翻譯）" });
 				card.createDiv({ cls: "el-say el-sentence", text: x.en });
 				if (x.alt) card.createDiv({ cls: "el-say el-sentence el-muted", text: x.alt });
 				if (x.source === "correction" && x.original) card.createDiv({ cls: "el-d-typed", text: x.original });
 				if (x.note) card.createDiv({ cls: "el-muted", text: x.note });
 				const bottom = card.createDiv({ cls: "el-row" });
-				bottom.createSpan({ cls: "el-muted", text: `${x.source === "correction" ? "被糾正" : x.source === "pattern" ? "常見錯誤練習" : "問過怎麼說"}・${st ? `下次複習：${relDay(st.due)}` : "還沒複習過"}` });
+				bottom.createSpan({ cls: "el-muted", text: `${PHRASE_SOURCE_LABEL[x.source] ?? "問過怎麼說"}・${st ? `下次複習：${relDay(st.due)}` : "還沒複習過"}` });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
 				rm.onclick = async () => {
 					await p.appendLog(p.makeEntry("phrase-remove", { key: x.key }));

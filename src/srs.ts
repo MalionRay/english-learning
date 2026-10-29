@@ -39,6 +39,7 @@ export interface AnswerLog {
 	hint?: boolean; // 作答前看了中文翻譯：答對也只算練習，不升級
 	dontKnow?: boolean; // 按了「我不知道」（視為答錯）
 	marked?: boolean;
+	via?: "chat"; // 在英文對話中用對了（算一次複習）
 }
 
 export interface GradeLog {

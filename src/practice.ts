@@ -4,7 +4,7 @@ import { FLAG_REASONS, loadFlags } from "./flags";
 import { loadFixes, resolveQuestion } from "./fixes";
 import { WordItem, WordLog, aliasWordQids, buildWordBookWithAliases, wordKey, wordQid } from "./words";
 import { DictItem, dictationItems } from "./dictation";
-import { PhraseItem, PhraseLog, buildPhraseBook, phraseQid } from "./chat";
+import { PhraseItem, PhraseLog, buildPhraseBook, failedSentenceMap, phraseQid } from "./chat";
 import { Menu } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, stripMarks } from "./generate";
@@ -127,7 +127,6 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 		banks.filter((b) => level === "all" || b.level === level),
 		logs as (AnswerLog | GradeLog | WordLog)[],
 	);
-	const phrases = buildPhraseBook(logs);
 	const marked = new Set([...pqs.filter((p) => p.marked).map((p) => p.q.id), ...words.filter((w) => w.reasons.has("marked")).map((w) => wordQid(w.key))]);
 	// 合併的字（went → go）：舊 key 的複習紀錄算到合併後的字
 	const answerLogs = aliasWordQids(
@@ -135,6 +134,8 @@ export async function loadPractice(app: App, user: string, level: LevelFilter): 
 		aliases,
 	);
 	const dicts = dictationItems(pqs.map((x) => ({ q: x.q, bank: x.bank })));
+	// 句子本：對話與手動加入的句子，加上答錯的克漏字／翻譯／聽力句子
+	const phrases = buildPhraseBook(logs, failedSentenceMap(pqs, dicts));
 	return { pqs, states: computeStates(answerLogs, marked), logs, words, dicts, phrases, banks };
 }
 
@@ -410,7 +411,7 @@ export class PracticeView extends ItemView {
 		const srcs: { q: Question; bank: Bank }[] = [];
 		for (const b of banks) for (const q of b.questions) srcs.push({ q, bank: b });
 		const listen = new Map(dictationItems(srcs).map((x) => [x.id, x]));
-		const phraseMap = new Map(buildPhraseBook(logs).map((x) => [phraseQid(x.key), x]));
+		const phraseMap = new Map(buildPhraseBook(logs, failedSentenceMap(srcs, [...listen.values()])).map((x) => [phraseQid(x.key), x]));
 		let done = 0;
 		for (const a of pend) {
 			const li = a.qtype === "listening" ? listen.get(a.qid) : undefined;
@@ -640,8 +641,27 @@ export class PracticeView extends ItemView {
 
 	/** 句子：看中文說（或打）英文 → AI 批改，或翻面自己判斷。 */
 	private drawPhrase(card: HTMLElement, pq: PQ, ph: PhraseItem) {
-		card.createDiv({ cls: "el-muted", text: ph.source === "correction" ? "對話中你想說的話，用英文說說看：" : ph.source === "pattern" ? "常見錯誤的練習句，用英文說說看：" : "你問過的說法，用英文說說看：" });
-		card.createDiv({ cls: "el-qword", text: ph.zh });
+		const intro: Record<PhraseItem["source"], string> = {
+			correction: "對話中你想說的話，用英文說說看：",
+			howto: "你問過的說法，用英文說說看：",
+			pattern: "常見錯誤的練習句，用英文說說看：",
+			cloze: "之前克漏字答錯的句子，整句用英文說說看：",
+			translate: "之前翻譯答錯的句子，再說一次：",
+			listening: "之前沒聽懂的句子，用英文說說看：",
+		};
+		card.createDiv({ cls: "el-muted", text: intro[ph.source] ?? intro.howto });
+		const zhEl = card.createDiv({ cls: "el-qword", text: ph.zh || "翻譯中…" });
+		if (!ph.zh) {
+			// 舊題庫的句子沒有中文：即時翻譯（結果快取在這台裝置）
+			this.zhFor([ph.en])
+				.then(([zh]) => {
+					if (!zh) throw new Error("沒有翻譯");
+					ph.zh = zh;
+					(pq.q as TranslateQ).prompt = zh;
+					zhEl.setText(zh);
+				})
+				.catch((e) => zhEl.setText(`（無法翻譯：${(e as Error)?.message ?? e}；可以按「看答案」）`));
+		}
 		if (ph.source === "correction" && ph.original) card.createDiv({ cls: "el-muted", text: `（你當時寫的：${ph.original}）` });
 		const ta = card.createEl("textarea", { cls: "el-textarea el-answer", attr: { rows: "3", autocapitalize: "sentences", placeholder: "Type or dictate your English" } });
 		const r2 = card.createDiv({ cls: "el-row el-big-buttons" });
