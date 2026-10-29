@@ -73,6 +73,12 @@ export function quotaDay(d = new Date()): string {
 /** 各模型當天的每日額度是否已用完（記在記憶體，避免一直撞牆）。 */
 const exhausted = new Map<string, string>();
 
+/** 5xx 時等多久再重試（測試時可改小）。 */
+export let RETRY_5XX_MS = 1000;
+export function setRetryDelay(ms: number) {
+	RETRY_5XX_MS = ms;
+}
+
 export const DAILY_MSG = "今天的 AI 免費額度用完了，台灣時間下午 3～4 點後恢復。離線也能做的練習（選擇題、克漏字、生字複習、自己判斷）照常可以用。";
 
 /** 把 HTTP 錯誤轉成看得懂的中文。 */
@@ -86,7 +92,7 @@ export function classifyError(status: number, body: string, model: string): AIEr
 	if (status === 400 && /api key/i.test(b)) return new AIError("API key 無效，請到「設定 → English Learning」重新輸入。", 400, b, "auth");
 	if (status === 401 || status === 403) return new AIError("API key 沒有權限或已停用，請到 Google AI Studio 確認。", status, b, "auth");
 	if (status === 404) return new AIError(`找不到模型「${model}」，請到設定確認模型名稱。`, 404, b, "model");
-	if (status >= 500) return new AIError("Google AI 暫時無法使用，請稍後再試。", status, b, "server");
+	if (status >= 500) return new AIError("Google AI 現在太忙（伺服器暫時無法使用），請過幾秒再送一次。", status, b, "server");
 	let msg = `AI 回應錯誤（HTTP ${status}）`;
 	try {
 		const m = JSON.parse(b)?.error?.message;
@@ -155,7 +161,8 @@ export class FallbackBackend implements AIBackend {
 		try {
 			return await fn(this.primary);
 		} catch (e) {
-			if (e instanceof AIError && (e.kind === "model" || e.kind === "daily")) {
+			// 模型不存在、今天額度用完、Google 伺服器忙：改用備用模型
+			if (e instanceof AIError && (e.kind === "model" || e.kind === "daily" || e.kind === "server")) {
 				this.onFallback?.(e);
 				return fn(this.backup);
 			}
@@ -204,7 +211,12 @@ export class GeminiBackend implements AIBackend {
 				throw new AIError("沒有網路連線，或連不到 Google。", undefined, String((e as Error)?.message ?? e), "network");
 			}
 		};
-		const res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
+		let res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
+		// Google 伺服器忙（5xx）：等一下自動重試一次
+		if (res.status >= 500) {
+			await new Promise((ok) => setTimeout(ok, RETRY_5XX_MS));
+			res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
+		}
 
 		if (res.status < 200 || res.status >= 300) throw classifyError(res.status, res.text?.slice(0, 2000) ?? "", this.model);
 

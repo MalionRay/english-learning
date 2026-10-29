@@ -50,3 +50,20 @@ test("快速模型不能用時改用主要模型", async () => {
 	await assert.rejects(new FallbackBackend(mk("fast", "auth"), mk("main")).complete("hi")); // API key 錯就不用再試
 	assert.deepEqual(used, ["model"]);
 });
+
+test("Google 伺服器忙：自動重試一次，還是不行就改用主要模型", async () => {
+	const { GeminiBackend: G, FallbackBackend: F, setRetryDelay } = require("../src/ai");
+	setRetryDelay(1);
+	const ok = { status: 200, text: "", json: { candidates: [{ content: { parts: [{ text: "hi" }] } }] } };
+	const busy = { status: 503, text: '{"error":{"message":"The model is overloaded."}}', json: {} };
+	let seq = [busy, ok];
+	ob.__setRequestHandler(async () => seq.shift());
+	assert.equal((await new G("k", "m-busy-1").complete("x")).text, "hi");
+	seq = [busy, busy];
+	await assert.rejects(new G("k", "m-busy-2").complete("x"), (e: any) => e.kind === "server");
+	// 快速模型一直忙 → 主要模型
+	const calls: string[] = [];
+	ob.__setRequestHandler(async (r: any) => (calls.push(r.url.includes("fast-busy") ? "fast" : "main"), r.url.includes("fast-busy") ? busy : ok));
+	assert.equal((await new F(new G("k", "fast-busy"), new G("k", "main-ok")).complete("x")).text, "hi");
+	assert.deepEqual(calls, ["fast", "fast", "main"]);
+});
