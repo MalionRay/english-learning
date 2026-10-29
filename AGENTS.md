@@ -99,6 +99,7 @@
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js
 - `npm run check` 掃描是否違反上面的硬性限制；每次改完都要跑
 - `npm test`：test/*.test.ts 用 esbuild 打包（obsidian 換成 test/mocks/obsidian.cjs，DOM 用 jsdom）後由 node --test 執行；每次改完都要跑，新功能要加測試
+- 實機測試狀態記在 TESTING.md：v0.6 起的功能都還沒在 iPad 實機測過（使用者決定功能做完再一起測）；新功能完成要加進「未實機測試」
 - 測試資料只能用自己編的句子，不放真實文章內容（repo 是公開的）
 - GitHub Action 每次推送都跑 build、check、test；推到 main 且測試通過才發布
 - 部署：把 main.js、manifest.json、styles.css 複製到
