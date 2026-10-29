@@ -17,6 +17,7 @@ export interface PronounceSettings {
 	ttsModel: string;
 	ttsVoice: string;
 	ttsDailyCap: number;
+	prefetchGemini?: boolean;
 }
 
 export type PronounceSource = "cache" | "dict" | "gemini" | "system";
@@ -304,6 +305,15 @@ export class Pronouncer {
 		return job;
 	}
 
+	private fallbackNoticeDay = "";
+	/** 自然語音用完、改用系統語音時，一天提醒一次。 */
+	private noticeFallbackOnce() {
+		const day = quotaDay();
+		if (this.fallbackNoticeDay === day) return;
+		this.fallbackNoticeDay = day;
+		this.d.notice("今天的 Gemini 自然語音（免費版每天 10 段）已用完，改用系統語音。iPad 可以下載更自然的系統語音：設定 → 輔助使用 → 朗讀內容 → 聲音 → 英文。");
+	}
+
 	private ttsPauseUntil = 0; // 每分鐘上限：暫停到這個時間
 	private interactiveUntil = 0; // 對話正在用語音：背景預先產生先讓路
 
@@ -404,7 +414,7 @@ export class Pronouncer {
 				this.d.debug(`prefetch dict failed ${t}: ${(e as Error)?.message ?? e}`);
 			}
 		}
-		if (!s.geminiTts) return "none";
+		if (!s.geminiTts || !s.prefetchGemini) return "none"; // 免費版每天只有 10 段，留給對話與點播
 		const q = loadQuota(this.d.app);
 		if (q.exhausted || q.count >= s.ttsDailyCap) return "quota";
 		if (Date.now() < this.ttsPauseUntil || Date.now() < this.interactiveUntil) return "busy"; // 每分鐘上限、或對話正在用語音
@@ -479,9 +489,15 @@ export class Pronouncer {
 	 */
 	async speakNatural(text: string, isStopped: () => boolean = () => false): Promise<boolean> {
 		const s = this.d.settings();
-		const parts = splitForSpeech(normalizeSpeech(text));
+		// 免費版每天只有 10 段：整段一次產生（切成兩段會用掉兩段額度）；付費後每日上限調高才切開先唸第一句
+		const t = normalizeSpeech(text);
+		const parts = s.ttsDailyCap > 20 ? splitForSpeech(t) : t ? [t] : [];
 		this.interactiveUntil = Date.now() + 5 * 60_000;
-		if (!parts.length || !s.geminiTts || !this.quotaOk(s)) return false;
+		if (!parts.length || !s.geminiTts) return false;
+		if (!this.quotaOk(s)) {
+			this.noticeFallbackOnce();
+			return false;
+		}
 		const jobs = parts.map((t) =>
 			this.fetchGemini(t, s).then(
 				(wav) => {
@@ -492,7 +508,7 @@ export class Pronouncer {
 					return wav;
 				},
 				(e) => {
-					if (e instanceof AIError && e.status === 429) this.hit429(e);
+					if (e instanceof AIError && e.status === 429 && this.hit429(e)) this.noticeFallbackOnce();
 					this.d.debug(`natural speech failed: ${(e as Error)?.message ?? e}`);
 					return null;
 				},

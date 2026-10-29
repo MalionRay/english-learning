@@ -646,6 +646,9 @@ export default class EnglishLearningPlugin extends Plugin {
 		for (const k of ["apiKey", "deviceId", "key"]) delete (this.settings as unknown as Record<string, unknown>)[k];
 		this.settings.users = (this.settings.users ?? []).map(safeName).filter(Boolean);
 		if (!this.settings.users.length) this.settings.users = ["default"];
+		// 舊預設值換成新的（使用者自己改過的值不動）
+		if (this.settings.fastModel === "gemini-3.1-flash-lite-preview") this.settings.fastModel = DEFAULTS.fastModel;
+		if (this.settings.ttsDailyCap === 100) this.settings.ttsDailyCap = DEFAULTS.ttsDailyCap;
 	}
 
 	async saveSettings() {

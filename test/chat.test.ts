@@ -33,3 +33,22 @@ test("句子本：去重與移除", () => {
 	] as any);
 	assert.deepEqual(book.map((b) => b.en), ["take a day off"]);
 });
+
+test("對話提示：像朋友聊天，不要制式稱讚", () => {
+	const { chatSystemPrompt, TOPICS } = require("../src/chat");
+	const adult = chatSystemPrompt("adult", TOPICS[0]);
+	assert.match(adult, /You are Alex/);
+	assert.match(adult, /Do NOT open with generic praise/);
+	assert.doesNotMatch(adult, /ask a follow-up question; 1–3 sentences/);
+	assert.match(chatSystemPrompt("kid", TOPICS[0]), /You are Mia/);
+});
+
+test("系統語音：有高品質語音就優先用", () => {
+	const { defaultVoice, voiceQuality } = require("../src/tts");
+	const v = (name: string, voiceURI: string, lang = "en-US") => ({ name, voiceURI, lang, localService: true });
+	const voices = [v("Samantha", "com.apple.voice.compact.en-US.Samantha"), v("Ava", "com.apple.voice.premium.en-US.Ava"), v("Zoe", "com.apple.voice.enhanced.en-US.Zoe"), v("Daniel", "x", "en-GB")];
+	assert.equal(voiceQuality(voices[1]), 2);
+	assert.equal(defaultVoice(voices).name, "Ava");
+	assert.equal(defaultVoice([voices[0], voices[2]]).name, "Zoe");
+	assert.equal(defaultVoice([voices[0]]).name, "Samantha");
+});

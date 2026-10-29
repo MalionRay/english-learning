@@ -432,7 +432,7 @@ export class ChatView extends ItemView {
 				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) + targetsPrompt(this.activeTargets(), this.meta.level),
 				json: true,
 				maxOutputTokens: 1024,
-				temperature: 0.7,
+				temperature: 0.9,
 				hedgeAfterMs: voiceBubble ? HEDGE_MS + 4000 : HEDGE_MS,
 				timeoutMs: TIMEOUT_MS,
 			});

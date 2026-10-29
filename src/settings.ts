@@ -128,10 +128,19 @@ export class ELSettingTab extends PluginSettingTab {
 			.setDesc(`全部 ${u.files} 個檔案、${formatBytes(u.bytes)}（這台裝置產生的 ${u.mineFiles} 個、${formatBytes(u.mineBytes)}）。Dropbox 免費版 2GB，一篇文章約 2～3MB。`);
 		new Setting(containerEl)
 			.setName("出題後預先產生錄音")
-			.setDesc("出題完成後在背景產生單字與句子的錄音，離線練習也是自然的聲音。只補自己匯入的題庫；語音額度用完就留到明天。")
+			.setDesc("出題完成後在背景下載單字的真人錄音（字典，免費），離線練習也是自然的聲音。只補自己匯入的題庫。")
 			.addToggle((t) =>
 				t.setValue(p.settings.prefetchAudio).onChange(async (v) => {
 					p.settings.prefetchAudio = v;
+					await p.saveSettings();
+				}),
+			);
+		new Setting(containerEl)
+			.setName("預先產生時也用 Gemini 語音")
+			.setDesc("句子也預先產生自然語音。免費版每天只有 10 段，會跟英文對話搶額度，建議開通付費後再打開。")
+			.addToggle((t) =>
+				t.setValue(p.settings.prefetchGemini).onChange(async (v) => {
+					p.settings.prefetchGemini = v;
 					await p.saveSettings();
 				}),
 			);
@@ -172,7 +181,7 @@ export class ELSettingTab extends PluginSettingTab {
 		const q = loadQuota(this.app);
 		new Setting(containerEl)
 			.setName("使用 Gemini 自然語音")
-			.setDesc(`用同一把 Gemini 金鑰，有免費額度。額度用完當天自動改用系統語音。這台裝置今天已產生 ${q.count} 段${q.exhausted ? "（今天額度已用完）" : ""}。`)
+			.setDesc(`用同一把 Gemini 金鑰。免費版每天只有 10 段（所有裝置共用），用完當天自動改用系統語音。這台裝置今天已產生 ${q.count} 段${q.exhausted ? "（今天額度已用完）" : ""}。`)
 			.addToggle((t) =>
 				t.setValue(p.settings.geminiTts).onChange(async (v) => {
 					p.settings.geminiTts = v;
@@ -181,7 +190,7 @@ export class ELSettingTab extends PluginSettingTab {
 			);
 		new Setting(containerEl)
 			.setName("每天最多產生幾段 Gemini 語音")
-			.setDesc("每台裝置分開計算，依 Google 的重置時間（台灣下午 3～4 點）歸零。")
+			.setDesc("每台裝置分開計算，依 Google 的重置時間（台灣下午 3～4 點）歸零。免費版是 10；開通付費後可以調高。")
 			.addText((t) =>
 				t.setValue(String(p.settings.ttsDailyCap)).onChange(async (v) => {
 					const n = Math.max(0, Math.min(10000, Math.floor(Number(v))));

@@ -32,8 +32,19 @@ export function englishVoices(): Promise<SpeechSynthesisVoice[]> {
 
 const PREFERRED = [/samantha/i, /aria/i, /jenny/i, /natural/i, /google us english/i, /zira/i, /alex/i, /ava/i];
 
+/** 語音品質：iOS／macOS 的 Premium（高品質）> Enhanced（優化）> 一般。 */
+export function voiceQuality(v: Pick<SpeechSynthesisVoice, "name" | "voiceURI">): number {
+	const id = `${v.voiceURI ?? ""} ${v.name ?? ""}`;
+	if (/premium|高品質/i.test(id)) return 2;
+	if (/enhanced|優化|增強/i.test(id)) return 1;
+	return 0;
+}
+
 export function defaultVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | undefined {
-	const us = voices.filter((v) => /en[-_]us/i.test(v.lang));
+	const all = voices.filter((v) => /en[-_]us/i.test(v.lang));
+	// 有下載高品質語音就優先用
+	const best = Math.max(0, ...all.map(voiceQuality));
+	const us = all.filter((v) => voiceQuality(v) === best);
 	for (const re of PREFERRED) {
 		const v = us.find((x) => re.test(x.name));
 		if (v) return v;
