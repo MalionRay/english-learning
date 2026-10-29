@@ -3,7 +3,7 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
-import { LS_TTS_RATE, LS_TTS_VOICE, defaultVoice, englishVoices, getRate } from "./tts";
+import { LS_TTS_RATE, getRate, voicePicker } from "./tts";
 import { loadQuota } from "./pronounce";
 import { LS_LAST_BACKUP, listBackups, restoreBackup } from "./backup";
 import { audioUsage, formatBytes } from "./audiocache";
@@ -216,20 +216,10 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		const voiceSetting = new Setting(containerEl).setName("系統語音（最後的備案）").setDesc("每台裝置各自設定。iPad 可在「設定 → 輔助使用 → 朗讀內容 → 聲音」下載更自然的英文語音。");
-		englishVoices().then((voices) => {
-			voiceSetting.addDropdown((d) => {
-				const def = defaultVoice(voices);
-				d.addOption("", `自動${def ? `（${def.name}）` : ""}`);
-				for (const v of voices) d.addOption(v.name, `${v.name}（${v.lang}）`);
-				const cur = this.app.loadLocalStorage(LS_TTS_VOICE);
-				d.setValue(typeof cur === "string" ? cur : "").onChange((v) => {
-					this.app.saveLocalStorage(LS_TTS_VOICE, v || null);
-					p.say("This is how I sound.");
-				});
-			});
-			if (!voices.length) voiceSetting.setDesc("找不到英文語音，這台裝置可能不支援朗讀。");
-		});
+		const voiceSetting = new Setting(containerEl)
+			.setName("系統語音")
+			.setDesc("每台裝置各自設定，選了會試唸。iPad 可在「設定 → 輔助使用 → 朗讀內容 → 聲音 → 英文」下載標「高品質」的語音，下載後重開 Obsidian 才會出現。");
+		voicePicker(this.app, voiceSetting.controlEl);
 		new Setting(containerEl)
 			.setName("朗讀速度")
 			.setDesc("0.5～1.5，預設 0.9")

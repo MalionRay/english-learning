@@ -94,3 +94,31 @@ export function stopSpeaking() {
 		/* ignore */
 	}
 }
+
+/** 選單上顯示的名稱：標出高品質語音，美式英文排前面。 */
+export function voiceLabel(v: Pick<SpeechSynthesisVoice, "name" | "voiceURI" | "lang">): string {
+	const q = voiceQuality(v);
+	return `${v.name}（${v.lang}${q === 2 ? "，高品質" : q === 1 ? "，優化" : ""}）`;
+}
+
+export function sortVoices(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice[] {
+	const us = (v: SpeechSynthesisVoice) => (/en[-_]us/i.test(v.lang) ? 1 : 0);
+	return [...voices].sort((a, b) => voiceQuality(b) - voiceQuality(a) || us(b) - us(a) || a.name.localeCompare(b.name));
+}
+
+/** 下拉選單：選英文系統語音（存在這台裝置），選了就用該語音試唸。 */
+export function voicePicker(app: App, parent: HTMLElement, sample = "Hi! This is how I sound."): void {
+	const sel = parent.createEl("select", { cls: "dropdown" });
+	englishVoices().then((voices) => {
+		const def = defaultVoice(voices);
+		sel.createEl("option", { text: `自動${def ? `（${def.name}）` : ""}`, value: "" });
+		for (const v of sortVoices(voices)) sel.createEl("option", { text: voiceLabel(v), value: v.name });
+		const cur = app.loadLocalStorage(LS_TTS_VOICE);
+		sel.value = typeof cur === "string" && voices.some((v) => v.name === cur) ? cur : "";
+		if (!voices.length) sel.createEl("option", { text: "（找不到英文語音）", value: "" });
+	});
+	sel.onchange = () => {
+		app.saveLocalStorage(LS_TTS_VOICE, sel.value || null);
+		speak(app, sample).catch(() => undefined);
+	};
+}
