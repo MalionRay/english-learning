@@ -62,3 +62,24 @@ export async function speak(app: App, text: string, rate?: number): Promise<Spee
 	s.speak(u);
 	return voice;
 }
+
+/** iOS：第一次朗讀必須在點擊事件裡。在點擊時先唸一段無聲的內容，之後（AI 回覆後）才能自動朗讀。 */
+export function primeSpeech() {
+	const s = synth();
+	if (!s || !ttsAvailable()) return;
+	try {
+		const u = new SpeechSynthesisUtterance(" ");
+		u.volume = 0;
+		s.speak(u);
+	} catch {
+		/* 不支援就算了 */
+	}
+}
+
+export function stopSpeaking() {
+	try {
+		synth()?.cancel();
+	} catch {
+		/* ignore */
+	}
+}

@@ -24,8 +24,13 @@ export interface AIOptions {
 	temperature?: number;
 	/** 附加圖片（complete 用；放在提示文字前面）。 */
 	images?: InlineImage[];
+	/** 超過這個毫秒數還沒回應，就再送一次相同的請求，取先回來的（減少偶發的長時間等待）。 */
+	hedgeAfterMs?: number;
+	/** 整體逾時（毫秒）。 */
+	timeoutMs?: number;
 }
 
+/** 附加在訊息裡的圖片或聲音。 */
 export interface InlineImage {
 	mimeType: string;
 	data: string; // base64（不含 data: 前綴）
@@ -34,7 +39,8 @@ export interface InlineImage {
 export interface ChatTurn {
 	role: "user" | "model";
 	text: string;
-	images?: InlineImage[];
+	/** 圖片或聲音（放在文字前面）。 */
+	media?: InlineImage[];
 }
 
 export interface AIBackend {
@@ -89,6 +95,47 @@ export function classifyError(status: number, body: string, model: string): AIEr
 	return new AIError(msg, status, b, "other");
 }
 
+/**
+ * 送出請求；超過 hedgeAfterMs 還沒回來就再送一次，取先成功的那個。
+ * 兩個都失敗才算失敗；超過 timeoutMs 視為逾時。
+ */
+export function hedged<T>(fn: () => Promise<T>, hedgeAfterMs?: number, timeoutMs?: number): Promise<T> {
+	if (!hedgeAfterMs && !timeoutMs) return fn();
+	return new Promise<T>((resolve, reject) => {
+		let settled = false;
+		let running = 0;
+		let launched = 0;
+		const timers: ReturnType<typeof setTimeout>[] = [];
+		const finish = (ok: boolean, v: unknown) => {
+			if (settled) return;
+			settled = true;
+			timers.forEach(clearTimeout);
+			if (ok) resolve(v as T);
+			else reject(v);
+		};
+		const launch = () => {
+			running++;
+			launched++;
+			fn().then(
+				(v) => finish(true, v),
+				(e) => {
+					running--;
+					// 還有另一個在跑、或還會再送一次：等它
+					if (running === 0 && (launched >= 2 || !hedgeAfterMs)) finish(false, e);
+					else if (running === 0) {
+						timers.forEach(clearTimeout);
+						launch();
+					}
+				},
+			);
+		};
+		launch();
+		if (hedgeAfterMs) timers.push(setTimeout(() => !settled && launched < 2 && launch(), hedgeAfterMs));
+		if (timeoutMs)
+			timers.push(setTimeout(() => finish(false, new AIError(`AI 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應，請再送一次。`, undefined, "", "network")), timeoutMs));
+	});
+}
+
 /** Google Gemini（generateContent）。網路只用 requestUrl()。 */
 export class GeminiBackend implements AIBackend {
 	readonly id = "gemini";
@@ -96,7 +143,7 @@ export class GeminiBackend implements AIBackend {
 	constructor(private apiKey: string, readonly model: string) {}
 
 	complete(prompt: string, opts: AIOptions = {}): Promise<AIResult> {
-		return this.chat([{ role: "user", text: prompt, images: opts.images }], opts);
+		return this.chat([{ role: "user", text: prompt, media: opts.images }], opts);
 	}
 
 	async chat(turns: ChatTurn[], opts: AIOptions = {}): Promise<AIResult> {
@@ -107,26 +154,22 @@ export class GeminiBackend implements AIBackend {
 		const body: Record<string, unknown> = {
 			contents: turns.map((t) => ({
 				role: t.role,
-				parts: [...(t.images ?? []).map((i) => ({ inlineData: { mimeType: i.mimeType, data: i.data } })), { text: t.text }],
+				parts: [...(t.media ?? []).map((i) => ({ inlineData: { mimeType: i.mimeType, data: i.data } })), { text: t.text }],
 			})),
 			generationConfig,
 		};
 		if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
 
 		if (exhausted.get(this.model) === quotaDay()) throw new AIError(DAILY_MSG, 429, "", "daily");
-		let res;
-		try {
-			res = await requestUrl({
-				url,
-				method: "POST",
-				contentType: "application/json",
-				headers: { "x-goog-api-key": this.apiKey },
-				body: JSON.stringify(body),
-				throw: false,
-			});
-		} catch (e) {
-			throw new AIError("沒有網路連線，或連不到 Google。", undefined, String((e as Error)?.message ?? e), "network");
-		}
+		const payload = JSON.stringify(body);
+		const post = async () => {
+			try {
+				return await requestUrl({ url, method: "POST", contentType: "application/json", headers: { "x-goog-api-key": this.apiKey }, body: payload, throw: false });
+			} catch (e) {
+				throw new AIError("沒有網路連線，或連不到 Google。", undefined, String((e as Error)?.message ?? e), "network");
+			}
+		};
+		const res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
 
 		if (res.status < 200 || res.status >= 300) throw classifyError(res.status, res.text?.slice(0, 2000) ?? "", this.model);
 

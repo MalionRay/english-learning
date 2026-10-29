@@ -117,3 +117,11 @@
 .el-target-chip.is-done { background: var(--background-modifier-success, rgba(0, 160, 80, 0.15)); border-color: var(--color-green, #2a9d50); }
 .el-target-word { text-decoration: underline dotted var(--text-accent); text-underline-offset: 3px; font-weight: 600; }
 .el-chat-reviewed { align-self: center; margin: 4px auto; font-size: var(--font-ui-small); color: var(--color-green, #2a9d50); }
+
+/* 對話：語音輸入與朗讀 */
+.el-chat-input button.el-mic { padding: 0 14px; font-size: 1.2em; }
+.el-chat-input button.el-mic.is-recording { background: var(--color-red, #d33); color: #fff; font-size: 1em; animation: el-pulse 1.2s ease-in-out infinite; }
+@keyframes el-pulse { 50% { opacity: 0.7; } }
+.el-rec-info { min-height: 1.2em; }
+.el-rec-info a { margin-left: 8px; cursor: pointer; }
+.el-bubble-user.is-failed { opacity: 0.6; }
