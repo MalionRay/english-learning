@@ -11,7 +11,7 @@
 - SRS 狀態不落檔，啟動時從所有 log 重算
 - 只在匯入來源的裝置出題，以 frontmatter status 防重複
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
-- 兩個模型：geminiModel（出題、修正題、錯誤分析、拍照辨識）與 fastModel（對話、批改、翻譯、查原形；plugin.fastBackend()，FallbackBackend 在模型不存在或當日額度用完時改用 geminiModel）。iPad 實測 2026-10-29：免費版延遲變化很大（3.5-flash-lite 常 20～37 秒，3.1-flash-lite 多半 1.6 秒），fastModel 預設 gemini-3.1-flash-lite（舊值 -preview 自動換掉）
+- 兩個模型：geminiModel（出題、修正題、錯誤分析、拍照辨識）與 fastModel（對話、批改、翻譯、查原形；plugin.fastBackend()，FallbackBackend 在模型不存在、當日額度用完或 Google 伺服器忙（5xx）時改用 geminiModel；GeminiBackend 遇到 5xx 先等 1 秒自動重試一次）。iPad 實測 2026-10-29：免費版延遲變化很大（3.5-flash-lite 常 20～37 秒，3.1-flash-lite 多半 1.6 秒），fastModel 預設 gemini-3.1-flash-lite（舊值 -preview 自動換掉）
 - AI 錯誤用 classifyError 轉成中文（AIError.kind：daily／minute／auth／model／server／network）；每日額度用完後同一模型當天不再呼叫（太平洋時間）
 
 ## 開發順序

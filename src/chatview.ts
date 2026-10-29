@@ -25,6 +25,7 @@ import { VOICE_TURN, parseHeard } from "./chat";
 import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
 import { primeSpeech, speak, stopSpeaking } from "./tts";
 import { stopAudio, unlockAudio } from "./pronounce";
+import { AIError } from "./ai";
 import type { ChatTurn } from "./ai";
 import { SpeedTestModal } from "./speedtest";
 import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets } from "./chattargets";
@@ -468,7 +469,8 @@ export class ChatView extends ItemView {
 				voiceBubble.setText("🎤（沒有送出）");
 				voiceBubble.addClass("is-failed");
 			}
-			p.debug(`chat failed after ${Date.now() - t0} ms: ${(e as Error)?.message ?? e}`);
+			const body = e instanceof AIError && e.body ? ` ${e.body.replace(/\s+/g, " ").slice(0, 300)}` : "";
+			p.debug(`chat failed after ${Date.now() - t0} ms: ${(e as Error)?.message ?? e}${body}`);
 		} finally {
 			clearInterval(tick);
 			this.sending = false;
