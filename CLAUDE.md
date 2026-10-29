@@ -42,7 +42,7 @@
 - 翻譯題離線時記 pending: true；之後由「作答的那台裝置」批改，另寫一筆 type "grade"（answerId 對應），不改原紀錄
 - 排程：依時間戳（同時間依 UUID）重播；答對進下一格 LADDER [1,3,7,14,30,60,120,240] 天，生字用 MARKED_LADDER；答錯回第一格；到期提前 4 小時
 - 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
-- 每天新題上限（設定 newPerDay，預設 10，各題型合計）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
+- 每天新題上限（設定 newPerDay，預設 10，每種題型各自計算）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
 - 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
 - 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
 - 一次只練一種題型（開始畫面依題型列出到期／新題數）
