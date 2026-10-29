@@ -21,7 +21,7 @@
    4. 聽力練習：逐字聽寫 v0.9.0 → 改為聽力理解（中文解釋）v0.9.1；預先產生錄音 ← v0.10.0
    3. 文字對話，錯誤回收進 SRS ← v0.11.0
    5. 依麥克風測試結果決定語音範圍 ← 發音／口說改用外部 App（ELSA Speak）；v0.12.0 的口說跟讀已在 v0.12.1 移除，不要再加回來
-   6. 數學模組
+   6. 數學模組 ← 使用者 2026-10-29 決定先不做
 
 ## 題庫格式
 - english/sources/<標題>.md：frontmatter 有 id、title、level(adult|kid)、status(new|generating|generated)、importedOn
