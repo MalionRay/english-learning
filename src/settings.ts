@@ -1,9 +1,11 @@
 import * as obsidian from "obsidian";
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
-import { DEFAULTS, LS_FALLBACK_KEY } from "./constants";
+import { DEFAULTS, LS_FALLBACK_CLOUD_KEY, LS_FALLBACK_KEY } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, getRate, voicePicker } from "./tts";
+import { CHIRP_VOICES, CLOUD_FREE_CHARS, cloudMonth } from "./cloudtts";
+import { unlockAudio } from "./pronounce";
 import { loadQuota } from "./pronounce";
 import { LS_LAST_BACKUP, listBackups, restoreBackup } from "./backup";
 import { audioUsage, formatBytes } from "./audiocache";
@@ -216,6 +218,8 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		this.cloudSection(containerEl);
+
 		const voiceSetting = new Setting(containerEl)
 			.setName("系統語音")
 			.setDesc("每台裝置各自設定，選了會試唸。注意：iPad／iPhone 上 Apple 不讓 App 內的網頁使用另外下載的高品質語音，只能選內建的聲音。");
@@ -256,5 +260,77 @@ export class ELSettingTab extends PluginSettingTab {
 					);
 				});
 		}
+	}
+
+	/** Google Cloud 語音（Chirp 3 HD）設定。 */
+	private cloudSection(containerEl: HTMLElement) {
+		const p = this.plugin;
+		containerEl.createEl("h3", { text: "Google Cloud 語音（Chirp 3 HD）" });
+		containerEl.createEl("p", {
+			cls: "setting-item-description",
+			text: "很自然的聲音，每月前 100 萬字免費（Google 要求綁付費帳戶）。請用「另一個」Google Cloud 專案的金鑰：Gemini 用的那個專案一開付費，Gemini 就不再免費。開啟後的順序：已存錄音 → 字典真人錄音 → Google Cloud 語音 → Gemini 語音 → 系統語音。",
+		});
+		new Setting(containerEl)
+			.setName("使用 Google Cloud 語音")
+			.addToggle((t) =>
+				t.setValue(p.settings.cloudTts).onChange(async (v) => {
+					p.settings.cloudTts = v;
+					await p.saveSettings();
+				}),
+			);
+		const SecretComponentCtor = (obsidian as unknown as { SecretComponent?: typeof obsidian.SecretComponent }).SecretComponent;
+		const hasSecretStorage = !!(this.app as App & { secretStorage?: unknown }).secretStorage;
+		if (SecretComponentCtor && hasSecretStorage) {
+			new Setting(containerEl)
+				.setName("Google Cloud 語音的 API key")
+				.setDesc("存在 Obsidian 的 SecretStorage（本機、不進 Vault）。每台裝置各設定一次。")
+				.addComponent((el) =>
+					new SecretComponentCtor(this.app, el).setValue(p.settings.cloudKeySecretName).onChange(async (v) => {
+						p.settings.cloudKeySecretName = v ?? "";
+						await p.saveSettings();
+					}),
+				);
+		} else {
+			new Setting(containerEl).setName("Google Cloud 語音的 API key（備案：localStorage）").addText((t) => {
+				t.inputEl.type = "password";
+				const cur = this.app.loadLocalStorage(LS_FALLBACK_CLOUD_KEY);
+				t.setValue(typeof cur === "string" ? cur : "").onChange((v) => this.app.saveLocalStorage(LS_FALLBACK_CLOUD_KEY, v.trim() || null));
+			});
+		}
+		new Setting(containerEl)
+			.setName("聲音")
+			.setDesc("按「試聽」會用 Google Cloud 唸一句（算進每月字數，約 50 字）。")
+			.addDropdown((d) => {
+				for (const v of CHIRP_VOICES) d.addOption(v.name, v.label);
+				d.setValue(p.settings.cloudVoice || "Kore").onChange(async (v) => {
+					p.settings.cloudVoice = v;
+					await p.saveSettings();
+				});
+			})
+			.addButton((b) =>
+				b.setButtonText("試聽").onClick(() => {
+					unlockAudio();
+					p.pronouncer.testCloud("Hi! I'm your English buddy. How was your day?").then(
+						() => new Notice("Google Cloud 語音 OK"),
+						(e) => new Notice(`Google Cloud 語音失敗：${(e as Error)?.message ?? e}`, 10000),
+					);
+				}),
+			);
+		const usage = new Setting(containerEl)
+			.setName("每月上限（字）")
+			.setDesc("所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。")
+			.addText((t) =>
+				t.setValue(String(p.settings.cloudMonthlyCap)).onChange(async (v) => {
+					const n = Math.max(0, Math.min(CLOUD_FREE_CHARS, Math.floor(Number(v.replace(/,/g, "")))));
+					if (Number.isFinite(n)) {
+						p.settings.cloudMonthlyCap = n;
+						await p.saveSettings();
+					}
+				}),
+			);
+		p.pronouncer.cloudUsage.used().then(
+			(n) => usage.setDesc(`所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。這個月已用 ${n.toLocaleString()} 字（${cloudMonth()}，依已同步到這台的紀錄）。`),
+			() => undefined,
+		);
 	}
 }

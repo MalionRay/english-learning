@@ -6,6 +6,7 @@
 // 新取得的錄音存到 english/audio/<deviceId>/<hash>.<ext>：每台裝置只寫自己的資料夾（單一寫入者）。
 import { App, TAbstractFile, TFile, normalizePath, requestUrl } from "obsidian";
 import { AIError, quotaDay } from "./ai";
+import { CloudUsage, billedChars, cloudMonth, synthCloud } from "./cloudtts";
 
 export const AUDIO_DIR = "english/audio";
 const LS_DICT_MISS = "english-learning:dict-miss";
@@ -18,9 +19,12 @@ export interface PronounceSettings {
 	ttsVoice: string;
 	ttsDailyCap: number;
 	prefetchGemini?: boolean;
+	cloudTts?: boolean; // Google Cloud 語音（Chirp 3 HD）
+	cloudVoice?: string;
+	cloudMonthlyCap?: number;
 }
 
-export type PronounceSource = "cache" | "dict" | "gemini" | "system";
+export type PronounceSource = "cache" | "dict" | "cloud" | "gemini" | "system";
 
 // ---------------------------------------------------------------------
 // 雜湊與正規化
@@ -245,6 +249,7 @@ export interface PronounceDeps {
 	deviceId: string;
 	settings: () => PronounceSettings;
 	apiKey: () => string | null;
+	cloudKey?: () => string | null;
 	systemSpeak: (text: string, rate?: number) => Promise<unknown>;
 	log: (source: PronounceSource, extra: Record<string, unknown>) => void;
 	notice: (msg: string) => void;
@@ -257,7 +262,64 @@ export class Pronouncer {
 	private warnedExhausted = false;
 	private dictDownUntil = 0; // 字典服務暫時掛掉時，一小時內不再嘗試
 
-	constructor(private d: PronounceDeps) {}
+	readonly cloudUsage: CloudUsage;
+	private cloudOffUntil = 0; // Google Cloud 語音出錯（金鑰、權限）：這段時間不再試
+	private cloudWarned = false;
+
+	constructor(private d: PronounceDeps) {
+		this.cloudUsage = new CloudUsage(d.app);
+	}
+
+	// ---- Google Cloud 語音（Chirp 3 HD）----
+	/** 能用 Google Cloud 語音就回傳金鑰：有開啟、有金鑰、沒出錯暫停、本月沒到上限（含這段文字）。 */
+	private async cloudReady(text: string): Promise<string | null> {
+		const s = this.d.settings();
+		const key = this.d.cloudKey?.();
+		if (!s.cloudTts || !key || Date.now() < this.cloudOffUntil) return null;
+		const cap = s.cloudMonthlyCap ?? 800_000;
+		if ((await this.cloudUsage.used()) + billedChars(text) > cap) {
+			if (!this.cloudWarned) {
+				this.cloudWarned = true;
+				this.d.notice(`Google Cloud 語音這個月已用到上限（${cap.toLocaleString()} 字），下個月自動恢復；先改用其他語音。`);
+			}
+			return null;
+		}
+		return key;
+	}
+
+	/** 取得 Google Cloud 語音（MP3）；失敗回傳 null（並視情況暫停）。 */
+	private async fetchCloud(text: string, extra: Record<string, unknown> = {}): Promise<ArrayBuffer | null> {
+		const key = await this.cloudReady(text);
+		if (!key) return null;
+		const s = this.d.settings();
+		try {
+			const mp3 = await synthCloud(key, text, s.cloudVoice || "Kore");
+			const chars = billedChars(text);
+			this.cloudUsage.add(chars);
+			this.d.log("cloud", { text: text.slice(0, 200), chars, month: cloudMonth(), voice: s.cloudVoice || "Kore", bytes: mp3.byteLength, ...extra });
+			return mp3;
+		} catch (e) {
+			const kind = e instanceof AIError ? e.kind : "other";
+			// 金鑰或權限問題：這次開著的期間不再試；其他錯誤：暫停 1 分鐘
+			this.cloudOffUntil = Date.now() + (kind === "auth" ? 24 * 3600_000 : 60_000);
+			this.d.debug(`cloud tts failed: ${(e as Error)?.message ?? e}`);
+			if (kind === "auth") this.d.notice(`Google Cloud 語音無法使用：${(e as Error)?.message ?? e}。請到設定檢查金鑰與 API 是否開啟；先改用其他語音。`);
+			return null;
+		}
+	}
+
+	/** 設定頁「試聽」：一定用 Google Cloud 語音，失敗就丟錯誤。 */
+	async testCloud(text: string): Promise<void> {
+		const s = this.d.settings();
+		const key = this.d.cloudKey?.();
+		if (!key) throw new Error("還沒設定 Google Cloud 語音的金鑰");
+		this.cloudOffUntil = 0;
+		const mp3 = await synthCloud(key, text, s.cloudVoice || "Kore");
+		const chars = billedChars(text);
+		this.cloudUsage.add(chars);
+		this.d.log("cloud", { text, chars, month: cloudMonth(), voice: s.cloudVoice || "Kore", bytes: mp3.byteLength, test: true });
+		await playBuffer(mp3, "audio/mpeg");
+	}
 
 	// ---- 索引 ----
 	rebuildIndex() {
@@ -363,7 +425,17 @@ export class Pronouncer {
 				this.d.debug(`dict failed ${text}: ${(e as Error)?.message ?? e}（一小時內不再嘗試字典）`);
 			}
 		}
-		// 3. Gemini 語音
+		// 3. Google Cloud 語音（Chirp 3 HD）
+		if (!opts.forceGemini) {
+			const mp3 = await this.fetchCloud(text, opts.noSave ? { noSave: true } : {});
+			if (mp3) {
+				const playing = playBuffer(mp3, "audio/mpeg", rate);
+				if (!opts.noSave) await this.save(key, "mp3", mp3);
+				await playing;
+				return "cloud";
+			}
+		}
+		// 4. Gemini 語音
 		if (s.geminiTts && this.quotaOk(s)) {
 			try {
 				const wav = await this.fetchGemini(text, s);
@@ -385,7 +457,7 @@ export class Pronouncer {
 				}
 			}
 		}
-		// 4. 系統語音
+		// 5. 系統語音
 		await this.d.systemSpeak(text, opts.rate);
 		return "system";
 	}
@@ -394,7 +466,7 @@ export class Pronouncer {
 	 * 預先產生用：確保這段文字有錄音（不播放、不用系統語音）。
 	 * 回傳 "cache"（已存在）、"dict"、"gemini"、"quota"（額度或上限用完）或 "none"（無法取得）。
 	 */
-	async ensure(text: string): Promise<"cache" | "dict" | "gemini" | "quota" | "busy" | "none"> {
+	async ensure(text: string): Promise<"cache" | "dict" | "cloud" | "gemini" | "quota" | "busy" | "none"> {
 		const t = normalizeSpeech(text);
 		if (!t) return "none";
 		const key = audioKey(t);
@@ -412,6 +484,14 @@ export class Pronouncer {
 			} catch (e) {
 				this.dictDownUntil = Date.now() + 3600_000;
 				this.d.debug(`prefetch dict failed ${t}: ${(e as Error)?.message ?? e}`);
+			}
+		}
+		if ((s.cloudTts || (s.geminiTts && s.prefetchGemini)) && Date.now() < this.interactiveUntil) return "busy"; // 對話正在用語音：先讓路
+		if (s.cloudTts) {
+			const mp3 = await this.fetchCloud(t, { prefetch: true });
+			if (mp3) {
+				await this.save(key, "mp3", mp3);
+				return "cloud";
 			}
 		}
 		if (!s.geminiTts || !s.prefetchGemini) return "none"; // 免費版每天只有 10 段，留給對話與點播
@@ -491,9 +571,23 @@ export class Pronouncer {
 		const s = this.d.settings();
 		// 免費版每天只有 10 段：整段一次產生（切成兩段會用掉兩段額度）；付費後每日上限調高才切開先唸第一句
 		const t = normalizeSpeech(text);
-		const parts = s.ttsDailyCap > 20 ? splitForSpeech(t) : t ? [t] : [];
 		this.interactiveUntil = Date.now() + 5 * 60_000;
-		if (!parts.length || !s.geminiTts) return false;
+		if (!t) return false;
+		// Google Cloud 語音：切成第一句與其他，同時產生，第一句先唸
+		if (s.cloudTts && (await this.cloudReady(t))) {
+			const jobs = splitForSpeech(t).map((part) => this.fetchCloud(part, { noSave: true }));
+			let played = false;
+			for (const job of jobs) {
+				const mp3 = await job;
+				if (isStopped()) return true;
+				if (!mp3) break; // 失敗：沒唸過就往下試 Gemini，唸過一半就算了
+				await playToEnd(mp3, "audio/mpeg");
+				played = true;
+			}
+			if (played) return true;
+		}
+		const parts = s.ttsDailyCap > 20 ? splitForSpeech(t) : [t];
+		if (!s.geminiTts) return false;
 		if (!this.quotaOk(s)) {
 			this.noticeFallbackOnce();
 			return false;

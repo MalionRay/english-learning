@@ -146,7 +146,7 @@ export class ChatView extends ItemView {
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "AI 回覆朗讀" });
 			const sel = r.createEl("select", { cls: "dropdown" });
-			sel.createEl("option", { text: "自然語音（Gemini）", value: "natural" });
+			sel.createEl("option", { text: "自然語音（Google Cloud／Gemini）", value: "natural" });
 			sel.createEl("option", { text: "系統語音（立即、不用額度）", value: "system" });
 			sel.createEl("option", { text: "不自動朗讀", value: "off" });
 			sel.value = this.voice();

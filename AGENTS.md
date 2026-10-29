@@ -32,7 +32,8 @@
 - 解釋一律繁體中文（台灣用語）
 - 生字：文章中用 ==字== 標記（匯入時也可填，會自動標記）；出題時一定要考，vocab 題帶 marked: true
 - 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
-- 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Gemini TTS → 系統語音
+- 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Google Cloud 語音（開啟時）→ Gemini TTS → 系統語音
+- Google Cloud 語音（src/cloudtts.ts，Chirp 3 HD，en-US-Chirp3-HD-<聲音>，MP3）：每月前 100 萬字免費但要付費帳戶，所以金鑰必須來自「另一個」專案（Gemini 那個專案開付費就失去免費版）；金鑰在 SecretStorage（cloudKeySecretName）；每次使用寫 tts log（source "cloud"、chars、month＝太平洋時間月份），CloudUsage 加總所有使用者與裝置的 log（UUID 去重、10 分鐘重讀）到 cloudMonthlyCap（預設 80 萬）就不再呼叫；403／金鑰錯誤停用 24 小時並提醒，其他錯誤暫停 1 分鐘；對話朗讀切句同時產生、依序播放；預先產生錄音開啟時也用它
 - 錄音存 english/audio/<deviceId>/<hash>.mp3|wav（單一寫入者；檔名是正規化文字的 cyrb53 雜湊），任何裝置都可讀
 - Gemini TTS 免費版每天只有 10 段（所有裝置共用，429 訊息寫 10 requests per day）：ttsDailyCap 預設 10（舊值 100 自動換掉）；預先產生錄音預設只用字典真人錄音（prefetchGemini 預設關）；對話朗讀在 ttsDailyCap ≤ 20 時整段一次產生、不切句；用完一天提醒一次並改系統語音
 - 系統語音預設挑 Premium（高品質）> Enhanced（優化）英文語音（voiceQuality 看 voiceURI／name）；但 iOS WebKit 的 getVoices 不列出另外下載的高品質語音（2026-10-30 iPad 實測 Ava、Zoe 下載後沒出現；Apple 論壇證實），所以 iPad 只有內建語音
