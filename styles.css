@@ -125,3 +125,6 @@
 .el-rec-info { min-height: 1.2em; }
 .el-rec-info a { margin-left: 8px; cursor: pointer; }
 .el-bubble-user.is-failed { opacity: 0.6; }
+
+/* 點字看中文：顯示在字的旁邊 */
+.el-w-zh { display: inline-block; margin: 0 4px; padding: 0 6px; border-radius: 6px; background: var(--background-secondary-alt, var(--background-secondary)); color: var(--text-accent); font-size: 0.85em; line-height: 1.5; cursor: pointer; }

@@ -4,7 +4,7 @@ import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
 import { stripMarks } from "./generate";
 import { listSources, stripFrontmatter } from "./sources";
-import { cachedZh, noticeMeaning, translateMany } from "./translate";
+import { cachedZh, inlineMeaning, translateMany } from "./translate";
 import {
 	CONV_DIR,
 	ChatReply,
@@ -620,7 +620,7 @@ export class ChatView extends ItemView {
 		const menu = new Menu();
 		menu.addItem((i) => i.setTitle(`🔊 唸 ${word}`).onClick(() => this.plugin.say(word)));
 		menu.addItem((i) =>
-			i.setTitle("看中文意思").onClick(() => noticeMeaning(this.app, () => this.plugin.fastBackend(), word)),
+			i.setTitle("看中文意思").onClick(() => inlineMeaning(this.app, () => this.plugin.fastBackend(), word, evt.target instanceof HTMLElement ? evt.target : null)),
 		);
 		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence)));
 		menu.showAtMouseEvent(evt);

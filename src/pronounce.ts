@@ -311,7 +311,7 @@ export class Pronouncer {
 		const day = quotaDay();
 		if (this.fallbackNoticeDay === day) return;
 		this.fallbackNoticeDay = day;
-		this.d.notice("今天的 Gemini 自然語音（免費版每天 10 段）已用完，改用系統語音。iPad 可以下載更自然的系統語音：設定 → 輔助使用 → 朗讀內容 → 聲音 → 英文。");
+		this.d.notice("今天的 Gemini 自然語音（免費版每天 10 段）已用完，改用系統語音（台灣時間下午 3～4 點恢復）。");
 	}
 
 	private ttsPauseUntil = 0; // 每分鐘上限：暫停到這個時間
