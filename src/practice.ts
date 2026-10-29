@@ -417,7 +417,7 @@ export class PracticeView extends ItemView {
 			const li = a.qtype === "listening" ? listen.get(a.qid) : undefined;
 			if (li && a.text) {
 				try {
-					const g = await gradeListening(p.backend(), li.text, li.zh, a.text, li.level);
+					const g = await gradeListening(p.fastBackend(), li.text, li.zh, a.text, li.level);
 					await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: g.score, correct: g.correct, feedback: g.feedback }));
 					done++;
 				} catch (e) {
@@ -430,7 +430,7 @@ export class PracticeView extends ItemView {
 			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: (this.plugin.user === "kid" ? "kid" : "adult") as Level } : qmap.get(a.qid);
 			if (!hit || !a.text) continue;
 			try {
-				const r = await gradeTranslation(p.backend(), hit.q, a.text, hit.level);
+				const r = await gradeTranslation(p.fastBackend(), hit.q, a.text, hit.level);
 				await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: r.score, correct: r.correct, feedback: r.feedback, corrected: r.corrected }));
 				done++;
 			} catch (e) {
@@ -449,7 +449,7 @@ export class PracticeView extends ItemView {
 		const cached = texts.map((t) => cachedZh(this.app, t));
 		if (cached.every(Boolean)) return cached as string[];
 		if (!navigator.onLine) throw new Error("這份題庫沒有內建翻譯，需要連上網路才能翻譯");
-		return translateMany(this.app, this.plugin.backend(), texts);
+		return translateMany(this.app, this.plugin.fastBackend(), texts);
 	}
 
 	/** 在 parent 裡加一個「中」按鈕；按下後在 target 顯示翻譯。作答前按下算看提示。 */
@@ -584,7 +584,7 @@ export class PracticeView extends ItemView {
 			let res: { correct?: boolean; score?: number; feedback?: string; pending?: boolean };
 			try {
 				if (!navigator.onLine) throw new Error("offline");
-				const g = await gradeListening(this.plugin.backend(), d.text, d.zh, text, d.level);
+				const g = await gradeListening(this.plugin.fastBackend(), d.text, d.zh, text, d.level);
 				res = { correct: g.correct, score: g.score, feedback: g.feedback };
 			} catch (e) {
 				this.plugin.debug(`listening grade failed: ${(e as Error)?.message ?? e}`);
@@ -688,7 +688,7 @@ export class PracticeView extends ItemView {
 			let res: { correct?: boolean; score?: number; feedback?: string; corrected?: string; pending?: boolean };
 			try {
 				if (!navigator.onLine) throw new Error("offline");
-				res = await gradeTranslation(this.plugin.backend(), pq.q as TranslateQ, text, this.plugin.user === "kid" ? "kid" : "adult");
+				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.user === "kid" ? "kid" : "adult");
 			} catch (e) {
 				this.plugin.debug(`phrase grade failed: ${(e as Error)?.message ?? e}`);
 				res = { pending: true };
@@ -1036,7 +1036,7 @@ export class PracticeView extends ItemView {
 			send.disabled = true;
 			try {
 				if (!navigator.onLine) throw new Error("offline");
-				const r = await gradeTranslation(this.plugin.backend(), q, text, pq.bank.level);
+				const r = await gradeTranslation(this.plugin.fastBackend(), q, text, pq.bank.level);
 				finish({ correct: r.correct, score: r.score, feedback: r.feedback, corrected: r.corrected }, text);
 			} catch (e) {
 				this.plugin.debug(`grade failed: ${(e as Error)?.message ?? e}`);

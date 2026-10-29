@@ -56,6 +56,9 @@ function setup(replies: object[]) {
 		deviceId: "ipad-1",
 		settings: { users: ["ray"] },
 		getApiKey: () => "k",
+		fastBackend() {
+			return this.backend();
+		},
 		backend: () => ({ chat: async (turns: any, o: any) => (calls.push({ turns, o }), { text: JSON.stringify(replies[n++]), usage: { inputTokens: 1, outputTokens: 1 }, model: "m" }) }),
 		appendText: async (f: any, s: string) => void files.set(f.path, String(files.get(f.path) ?? "") + s),
 		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + Math.random(), ts: new Date().toISOString(), device: "ipad-1", user: "ray", type, ...extra }),

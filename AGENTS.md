@@ -11,6 +11,7 @@
 - SRS 狀態不落檔，啟動時從所有 log 重算
 - 只在匯入來源的裝置出題，以 frontmatter status 防重複
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
+- 兩個模型：geminiModel（出題、修正題、錯誤分析、拍照辨識）與 fastModel（對話、批改、翻譯、查原形；plugin.fastBackend()，FallbackBackend 在模型不存在或當日額度用完時改用 geminiModel）。iPad 實測 2026-10-29：gemini-3.5-flash-lite 的對話大小請求 22～25 秒，gemini-3.1-flash-lite-preview 1.6 秒，所以 fastModel 預設後者
 - AI 錯誤用 classifyError 轉成中文（AIError.kind：daily／minute／auth／model／server／network）；每日額度用完後同一模型當天不再呼叫（太平洋時間）
 
 ## 開發順序
@@ -33,7 +34,7 @@
 - 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
 - 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Gemini TTS → 系統語音
 - 錄音存 english/audio/<deviceId>/<hash>.mp3|wav（單一寫入者；檔名是正規化文字的 cyrb53 雜湊），任何裝置都可讀
-- Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；收到 429 當天停用；設定有每日上限
+- Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；429 內容提到 per day 才當天停用，其他 429（每分鐘上限）只暫停 60 秒；預先產生錄音遇到每分鐘上限或對話正在用語音（speakNatural 後 5 分鐘）會等 30 秒再試；設定有每日上限
 - 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）
 

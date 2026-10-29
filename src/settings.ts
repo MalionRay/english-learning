@@ -59,6 +59,16 @@ export class ELSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("快速模型")
+			.setDesc("英文對話、批改、翻譯這類要馬上回應的地方用這個模型（出題、拍照辨識仍用上面的模型）。不能用時會自動改用上面的模型。對話慢的話可以用「AI 速度測試」比較。")
+			.addText((t) =>
+				t.setValue(p.settings.fastModel).onChange(async (v) => {
+					p.settings.fastModel = v.trim();
+					await p.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
 			.setName("出題後自動同步")
 			.setDesc("出題完成後立刻觸發 Remotely Save 上傳，讓其他裝置可以練習。")
 			.addToggle((t) =>

@@ -67,6 +67,7 @@ export async function runSpeedTest(
 	onRow: (r: SpeedRow) => void,
 	makeBackend: (m: string) => AIBackend = (m) => new GeminiBackend(apiKey, m),
 	tts?: { model: string; bench: (text: string) => Promise<{ ms: number; decodeMs: number; bytes: number }> },
+	fastModel?: string,
 ): Promise<SpeedRow[]> {
 	const rows: SpeedRow[] = [];
 	const push = (r: SpeedRow) => {
@@ -106,10 +107,14 @@ export async function runSpeedTest(
 	await gen("對話大小（第 1 次）", model, false);
 	await gen("對話大小（第 2 次）", model, false);
 	// 3. 明確關閉思考（兩種欄位寫法，看哪個有效）
-	await gen("對話＋thinkingLevel minimal", model, false, { thinkingLevel: "minimal" });
 	await gen("對話＋thinkingConfig minimal", model, false, { thinkingConfig: { thinkingLevel: "minimal" } });
+	// 快速模型（對話、批改、翻譯用的）
+	if (fastModel && fastModel !== model) {
+		await gen("對話大小（快速模型）", fastModel, false);
+		await gen("對話大小（快速模型，第 2 次）", fastModel, false);
+	}
 	// 4. 其他模型
-	for (const m of pickCompareModels(names, model)) await gen("對話大小", m, false);
+	for (const m of pickCompareModels(names.filter((n) => !n.endsWith(`/${fastModel}`)), model)) await gen("對話大小", m, false);
 	// 5. 自然語音（一句對話長度）：網路與解碼分開量
 	if (tts) {
 		let decode = 0;
@@ -168,6 +173,7 @@ export class SpeedTestModal extends Modal {
 			},
 			undefined,
 			p.settings.geminiTts ? { model: p.settings.ttsModel, bench: (t) => p.pronouncer.benchTts(t) } : undefined,
+			p.settings.fastModel,
 		);
 		const text = formatSpeedRows(rows);
 		p.debug(`speed test (${navigator.userAgent.slice(0, 80)}):\n${text}`);

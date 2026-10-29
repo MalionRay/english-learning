@@ -1,6 +1,6 @@
 import * as obsidian from "obsidian";
 import { App, Notice, Platform, Plugin, TFile, normalizePath } from "obsidian";
-import { AIBackend, AIError, GeminiBackend } from "./ai";
+import { AIBackend, AIError, FallbackBackend, GeminiBackend } from "./ai";
 import {
 	DEFAULTS,
 	HOME_VIEW,
@@ -237,6 +237,14 @@ export default class EnglishLearningPlugin extends Plugin {
 		const key = this.getApiKey();
 		if (!key) throw new Error("尚未設定 API key（設定 → English Learning）");
 		return new GeminiBackend(key, this.settings.geminiModel);
+	}
+
+	/** 要馬上回應的呼叫（對話、批改、翻譯、查原形）：用快速模型，不能用時改用主要模型。 */
+	fastBackend(): AIBackend {
+		const main = this.backend();
+		const fast = this.settings.fastModel?.trim();
+		if (!fast || fast === this.settings.geminiModel) return main;
+		return new FallbackBackend(new GeminiBackend(this.getApiKey()!, fast), main, (e) => this.debug(`fast model ${fast} unavailable (${e.kind}), using ${this.settings.geminiModel}`));
 	}
 
 	async testApi(): Promise<string> {
@@ -536,7 +544,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		let meaning = cachedZh(this.app, word);
 		if (!meaning && navigator.onLine !== false) {
 			try {
-				meaning = (await translateMany(this.app, this.backend(), [word]))[0];
+				meaning = (await translateMany(this.app, this.fastBackend(), [word]))[0];
 			} catch {
 				/* 之後複習時再查 */
 			}
@@ -546,7 +554,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		const key = wordKey(word);
 		if (!key.includes(" ") && !(key in IRREGULAR) && suffixCandidates(key).length && navigator.onLine !== false) {
 			try {
-				lemma = await aiLemma(this.backend(), word, context);
+				lemma = await aiLemma(this.fastBackend(), word, context);
 			} catch {
 				/* 查不到就只用規則合併 */
 			}

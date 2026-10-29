@@ -138,6 +138,38 @@ export function hedged<T>(fn: () => Promise<T>, hedgeAfterMs?: number, timeoutMs
 	});
 }
 
+/**
+ * 先用快速模型；模型不存在或今天額度用完時，自動改用備用模型（通常是設定裡的主要模型）。
+ */
+export class FallbackBackend implements AIBackend {
+	readonly id = "fallback";
+	constructor(
+		private primary: AIBackend,
+		private backup: AIBackend,
+		private onFallback?: (e: AIError) => void,
+	) {}
+	get model() {
+		return this.primary.model;
+	}
+	private async run(fn: (b: AIBackend) => Promise<AIResult>): Promise<AIResult> {
+		try {
+			return await fn(this.primary);
+		} catch (e) {
+			if (e instanceof AIError && (e.kind === "model" || e.kind === "daily")) {
+				this.onFallback?.(e);
+				return fn(this.backup);
+			}
+			throw e;
+		}
+	}
+	complete(prompt: string, opts?: AIOptions) {
+		return this.run((b) => b.complete(prompt, opts));
+	}
+	chat(turns: ChatTurn[], opts?: AIOptions) {
+		return this.run((b) => b.chat(turns, opts));
+	}
+}
+
 /** Google Gemini（generateContent）。網路只用 requestUrl()。 */
 export class GeminiBackend implements AIBackend {
 	readonly id = "gemini";

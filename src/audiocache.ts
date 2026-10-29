@@ -72,9 +72,11 @@ export async function prefetchAudio(
 	texts: AudioText[],
 	onProgress?: (done: number, total: number) => void,
 	shouldStop?: () => boolean,
+	busyWaitMs = 30_000,
 ): Promise<PrefetchResult> {
 	const todo = texts.filter((t) => !pron.has(t.text));
 	const res: PrefetchResult = { total: texts.length, already: texts.length - todo.length, made: 0, stoppedByQuota: false };
+	let waits = 0;
 	for (let i = 0; i < todo.length; i++) {
 		if (shouldStop?.()) break;
 		if (typeof navigator !== "undefined" && navigator.onLine === false) break;
@@ -84,6 +86,14 @@ export async function prefetchAudio(
 			res.stoppedByQuota = true;
 			break;
 		}
+		if (r === "busy") {
+			// 每分鐘上限或對話正在用語音：等一下再試同一句；等太久就下次再補
+			if (++waits > 20) break;
+			await new Promise((ok) => setTimeout(ok, busyWaitMs));
+			i--;
+			continue;
+		}
+		waits = 0;
 		onProgress?.(i + 1, todo.length);
 		await new Promise((ok) => setTimeout(ok, 300)); // 不要連續打太快
 	}
