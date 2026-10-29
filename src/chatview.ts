@@ -4,7 +4,7 @@ import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
 import { stripMarks } from "./generate";
 import { listSources, stripFrontmatter } from "./sources";
-import { cachedZh, translateMany } from "./translate";
+import { cachedZh, noticeMeaning, translateMany } from "./translate";
 import {
 	CONV_DIR,
 	ChatReply,
@@ -23,7 +23,7 @@ import {
 
 import { VOICE_TURN, parseHeard } from "./chat";
 import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
-import { primeSpeech, speak, stopSpeaking } from "./tts";
+import { primeSpeech, speak, stopSpeaking, voicePicker } from "./tts";
 import { stopAudio, unlockAudio } from "./pronounce";
 import { AIError } from "./ai";
 import type { ChatTurn } from "./ai";
@@ -151,6 +151,11 @@ export class ChatView extends ItemView {
 			sel.createEl("option", { text: "不自動朗讀", value: "off" });
 			sel.value = this.voice();
 			sel.onchange = () => this.app.saveLocalStorage(LS_CHAT_VOICE, sel.value);
+		});
+		el.createDiv({ cls: "el-row" }, (r) => {
+			r.createSpan({ text: "系統語音" });
+			voicePicker(this.app, r);
+			r.createSpan({ cls: "el-muted", text: "自然語音用完或選「系統語音」時用這個聲音" });
 		});
 		let review = prefs.review !== false;
 		el.createEl("label", { cls: "el-row" }, (r) => {
@@ -615,13 +620,7 @@ export class ChatView extends ItemView {
 		const menu = new Menu();
 		menu.addItem((i) => i.setTitle(`🔊 唸 ${word}`).onClick(() => this.plugin.say(word)));
 		menu.addItem((i) =>
-			i.setTitle("看中文意思").onClick(async () => {
-				try {
-					new Notice(`${word}：${cachedZh(this.app, word) ?? (await translateMany(this.app, this.plugin.fastBackend(), [word]))[0]}`, 8000);
-				} catch (e) {
-					new Notice(`無法翻譯：${(e as Error)?.message ?? e}`);
-				}
-			}),
+			i.setTitle("看中文意思").onClick(() => noticeMeaning(this.app, () => this.plugin.fastBackend(), word)),
 		);
 		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence)));
 		menu.showAtMouseEvent(evt);

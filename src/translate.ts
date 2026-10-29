@@ -1,6 +1,6 @@
 // 即時中文翻譯（舊題庫沒有預先產生翻譯、或文章段落時使用）。
 // 結果快取在這台裝置的 localStorage，翻過一次就不用再呼叫 API。
-import type { App } from "obsidian";
+import { App, Notice } from "obsidian";
 import type { AIBackend } from "./ai";
 import { audioKey } from "./pronounce";
 
@@ -36,7 +36,7 @@ export async function translateMany(app: App, ai: AIBackend, texts: string[]): P
 	const todo = texts.map((t, i) => ({ t, i })).filter((x) => !out[x.i]);
 	if (todo.length) {
 		const prompt = todo.map((x, k) => `${k + 1}. ${x.t}`).join("\n");
-		const res = await ai.complete(prompt, { system: SYSTEM, json: true, maxOutputTokens: 4096, temperature: 0.2 });
+		const res = await ai.complete(prompt, { system: SYSTEM, json: true, maxOutputTokens: 4096, temperature: 0.2, hedgeAfterMs: 6000, timeoutMs: 25000 });
 		let arr: unknown;
 		try {
 			arr = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")).zh;
@@ -54,4 +54,22 @@ export async function translateMany(app: App, ai: AIBackend, texts: string[]): P
 		save(app, cache);
 	}
 	return out;
+}
+
+/** 點字「看中文意思」：馬上顯示「查詢中…」，查到後更新同一個提示（iPad 上等待時才不會像沒反應）。 */
+export async function noticeMeaning(app: App, getAi: () => AIBackend, word: string): Promise<void> {
+	const cached = cachedZh(app, word);
+	if (cached) {
+		new Notice(`${word}：${cached}`, 8000);
+		return;
+	}
+	const n = new Notice(`${word}：查詢中…`, 0);
+	try {
+		if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("沒有網路");
+		const zh = (await translateMany(app, getAi(), [word]))[0];
+		n.setMessage(`${word}：${zh || "（查不到）"}`);
+	} catch (e) {
+		n.setMessage(`${word}：無法翻譯（${(e as Error)?.message ?? e}）`);
+	}
+	setTimeout(() => n.hide(), 8000);
 }

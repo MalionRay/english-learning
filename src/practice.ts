@@ -12,7 +12,7 @@ import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
 import { AnswerLog, GradeLog, QState, computeStates, newIntroducedToday, pickSession } from "./srs";
 import { gradeListening, gradeTranslation } from "./grade";
-import { cachedZh, translateMany } from "./translate";
+import { cachedZh, noticeMeaning, translateMany } from "./translate";
 
 export const PRACTICE_VIEW = "english-learning-practice";
 const LS_PRACTICE = "english-learning:practice"; // { [user]: { level, size, sync } }
@@ -520,11 +520,7 @@ export class PracticeView extends ItemView {
 		menu.addItem((i) =>
 			i.setTitle("看中文意思").onClick(async () => {
 				if (!this.answered) this.hintUsed = true;
-				try {
-					new Notice(`${word}：${(await this.zhFor([word]))[0]}`, 8000);
-				} catch (e) {
-					new Notice(`無法翻譯：${(e as Error)?.message ?? e}`);
-				}
+				await noticeMeaning(this.app, () => this.plugin.fastBackend(), word);
 			}),
 		);
 		const inBook = this.wordKeys.has(wordKey(word));
