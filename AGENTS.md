@@ -76,7 +76,8 @@
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53），加上自動推導的「答錯的句子」：克漏字（含我不知道，整句＝填入答案）、翻譯題（reference／prompt；含 grade 判錯）、聽力（沒聽懂）；relearn 不算；移除後又答錯會再出現（failedSentenceMap＋buildPhraseBook）；舊題庫沒有中文時練習當下即時翻譯
 - 對話中的 SRS 複習（src/chattargets.ts）：開始或續聊時挑到期的生字 5 個、句子 2 句（上次答錯優先；到期不夠才補少量沒複習過的），加進系統提示請 AI 自然使用並製造機會；AI 回 learnerUsed；單字要訊息裡真的出現（含變化形）才算，沒被糾正時就算 AI 沒報也算；用對了記 answer（qid word:/phrase:、correct true、via "chat"、session＝對話檔路徑），每次對話每個目標只記一次；開始畫面可關閉
 - 語音輸入（src/recorder.ts 的 WavRecorder：Web Audio → 16 kHz 單聲道 WAV，最長 60 秒）：🎤 開始、「說完了」送出；錄音直接當 inlineData 送進同一次 chat 呼叫（VOICE_TURN），AI 先把逐字內容寫在 "heard"（保留文法錯誤、中文用繁體）再照常回覆；heard 空的就不存訊息；對話檔的語音訊息標 voice: true／**You 🎤:**。這是對話輸入，不是 v0.12 的口說跟讀評分
-- AI 回覆自動朗讀：每台裝置設定（localStorage english-learning:chat-voice）system＝系統語音（預設，立即）／natural＝Gemini 自然語音（noSave：不存錄音檔）／off；點擊「開始對話」「送出」「說完了」時同步呼叫 primeAudio（unlockAudio＋primeSpeech）解鎖 iOS 播放
+- AI 回覆自動朗讀：每台裝置設定（localStorage english-learning:chat-voice）natural＝Gemini 自然語音（預設；Pronouncer.speakNatural：切成第一句與其他、同時產生、依序播放、不存檔；拿不到就改系統語音）／system＝系統語音／off；點擊「開始對話」「送出」「說完了」時同步呼叫 primeAudio（unlockAudio＋primeSpeech）解鎖 iOS 播放
+- AI 速度測試（src/speedtest.ts；對話開始畫面與指令）：在裝置上量列出模型（純網路）、最短生成、對話大小 JSON（兩次）、thinkingLevel minimal 兩種寫法、其他 flash 模型、自然語音（網路與解碼分開）與主執行緒卡頓，結果寫進 debug 並同步
 - 回應速度：chat 用 hedged 請求（8 秒沒回就再送一次，取先回來的；語音 12 秒），45 秒逾時；api log 記 ms，超過 8 秒寫 debug；使用者訊息寫檔不等待（寫入佇列保持順序）
 - 練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
 

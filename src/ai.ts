@@ -28,6 +28,8 @@ export interface AIOptions {
 	hedgeAfterMs?: number;
 	/** 整體逾時（毫秒）。 */
 	timeoutMs?: number;
+	/** 額外的 generationConfig 欄位（例如 thinkingLevel）。 */
+	generationExtra?: Record<string, unknown>;
 }
 
 /** 附加在訊息裡的圖片或聲音。 */
@@ -151,6 +153,7 @@ export class GeminiBackend implements AIBackend {
 		const generationConfig: Record<string, unknown> = { maxOutputTokens: opts.maxOutputTokens ?? 256 };
 		if (opts.json) generationConfig.responseMimeType = "application/json";
 		if (opts.temperature !== undefined) generationConfig.temperature = opts.temperature;
+		if (opts.generationExtra) Object.assign(generationConfig, opts.generationExtra);
 		const body: Record<string, unknown> = {
 			contents: turns.map((t) => ({
 				role: t.role,

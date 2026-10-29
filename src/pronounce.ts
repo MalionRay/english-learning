@@ -116,6 +116,32 @@ async function playBuffer(data: ArrayBuffer, mime: string, rate = 1): Promise<vo
 	await player.play();
 }
 
+/** 播放並等到播完（或被停止）。 */
+async function playToEnd(data: ArrayBuffer, mime: string): Promise<void> {
+	await playBuffer(data, mime);
+	const p = player;
+	if (!p) return;
+	await new Promise<void>((done) => {
+		const end = () => {
+			p.removeEventListener("ended", end);
+			p.removeEventListener("pause", end);
+			p.removeEventListener("error", end);
+			done();
+		};
+		p.addEventListener("ended", end);
+		p.addEventListener("pause", end);
+		p.addEventListener("error", end);
+	});
+}
+
+/** 把一段話切成「第一句」和「其他」：第一句先產生、先播，等待時間比較短。 */
+export function splitForSpeech(text: string): string[] {
+	const t = text.replace(/\s+/g, " ").trim();
+	const m = /^(.{12,}?[.!?])\s+(\S.*)$/.exec(t);
+	if (!m || t.length < 60) return t ? [t] : [];
+	return [m[1], m[2]];
+}
+
 function mimeFor(path: string): string {
 	return path.endsWith(".mp3") ? "audio/mpeg" : path.endsWith(".ogg") ? "audio/ogg" : "audio/wav";
 }
@@ -436,7 +462,60 @@ export class Pronouncer {
 	}
 
 	// ---- Gemini ----
-	private async fetchGemini(text: string, s: PronounceSettings): Promise<ArrayBuffer> {
+	/**
+	 * 一次性的句子（對話回覆）用自然語音唸：切成第一句與其他，同時請 Gemini 產生，依序播放。
+	 * 不存檔。拿不到 Gemini 語音（額度用完、失敗）就回傳 false，由呼叫的地方改用系統語音。
+	 * 呼叫前請先在點擊事件裡呼叫 unlockAudio()。
+	 */
+	async speakNatural(text: string, isStopped: () => boolean = () => false): Promise<boolean> {
+		const s = this.d.settings();
+		const parts = splitForSpeech(normalizeSpeech(text));
+		if (!parts.length || !s.geminiTts || !this.quotaOk(s)) return false;
+		const jobs = parts.map((t) =>
+			this.fetchGemini(t, s).then(
+				(wav) => {
+					const q = loadQuota(this.d.app);
+					q.count++;
+					saveQuota(this.d.app, q);
+					this.d.log("gemini", { text: t.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count, noSave: true });
+					return wav;
+				},
+				(e) => {
+					if (e instanceof AIError && e.status === 429) {
+						const q = loadQuota(this.d.app);
+						q.exhausted = true;
+						saveQuota(this.d.app, q);
+					}
+					this.d.debug(`natural speech failed: ${(e as Error)?.message ?? e}`);
+					return null;
+				},
+			),
+		);
+		let played = false;
+		for (const job of jobs) {
+			const wav = await job;
+			if (isStopped()) return true;
+			if (!wav) return played; // 後半失敗：前半已經唸了就算了
+			await playToEnd(wav, "audio/wav");
+			played = true;
+		}
+		return played;
+	}
+
+	/** 速度測試：Gemini 語音的網路時間與解碼時間（會計入每日上限，不播放、不存檔）。 */
+	async benchTts(text: string): Promise<{ ms: number; decodeMs: number; bytes: number }> {
+		const s = this.d.settings();
+		const t0 = Date.now();
+		const timing = { fetched: 0 };
+		const wav = await this.fetchGemini(text, s, timing);
+		const q = loadQuota(this.d.app);
+		q.count++;
+		saveQuota(this.d.app, q);
+		const t2 = Date.now();
+		return { ms: timing.fetched - t0, decodeMs: t2 - timing.fetched, bytes: wav.byteLength };
+	}
+
+	private async fetchGemini(text: string, s: PronounceSettings, timing?: { fetched: number }): Promise<ArrayBuffer> {
 		const key = this.d.apiKey();
 		if (!key) throw new Error("沒有 API key");
 		const res = await requestUrl({
@@ -452,6 +531,7 @@ export class Pronouncer {
 			}),
 			throw: false,
 		});
+		if (timing) timing.fetched = Date.now();
 		if (res.status < 200 || res.status >= 300) {
 			let msg = `TTS HTTP ${res.status}`;
 			try {
