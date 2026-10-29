@@ -63,7 +63,7 @@ function setup(replies: object[]) {
 		addPhrase: async () => undefined,
 		debug: () => undefined,
 		triggerSync: () => undefined,
-		say: (text: string, rate: unknown, opts: unknown) => said.push({ text, opts }),
+		pronouncer: { speakNatural: async (text: string) => (said.push({ text }), true) },
 	};
 	const view: any = new ChatView({ app } as any, plugin);
 	return { app, files, view, calls, said };
@@ -75,11 +75,9 @@ test("語音訊息：錄音直接送 AI，顯示聽到的內容並存進對話",
 		{ heard: "I go to 公司 yesterday", correction: { original: "I go to 公司 yesterday", corrected: "I went to the office yesterday.", explanation: "過去式", zh: "我昨天去公司" }, howto: [{ zh: "公司", en: "the office" }], reply: "What did you do there?", replyZh: "你在那裡做什麼？" },
 		{ heard: "", correction: null, howto: [], reply: "Sorry?", replyZh: "" },
 	]);
-	app.saveLocalStorage(LS_CHAT_VOICE, "natural");
-	await view.onOpen();
+	await view.onOpen(); // 沒設定時預設自然語音
 	await view.startNew({ id: "free", label: "自由聊天", prompt: "x" }, undefined, false);
-	assert.deepEqual(said.map((x) => x.text), ["Hello! How are you?"]); // 自動朗讀
-	assert.deepEqual(said[0].opts, { noSave: true });
+	assert.deepEqual(said.map((x) => x.text), ["Hello! How are you?"]); // 自動朗讀（自然語音）
 
 	await view.sendVoice(encodeWav(new Float32Array(16000), 16000));
 	const last = calls[1].turns[calls[1].turns.length - 1];
@@ -113,5 +111,5 @@ test("關掉自動朗讀就不唸；手動 🔊 仍可唸", async () => {
 	assert.equal(said.length, 0);
 	assert.equal(view.contentEl.querySelector(".el-top button").textContent, "🔇");
 	view.contentEl.querySelector(".el-top button").click(); // 打開
-	assert.equal(app.loadLocalStorage(LS_CHAT_VOICE), "system");
+	assert.equal(app.loadLocalStorage(LS_CHAT_VOICE), "natural");
 });

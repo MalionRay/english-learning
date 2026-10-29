@@ -26,13 +26,14 @@ import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder
 import { primeSpeech, speak, stopSpeaking } from "./tts";
 import { stopAudio, unlockAudio } from "./pronounce";
 import type { ChatTurn } from "./ai";
+import { SpeedTestModal } from "./speedtest";
 import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets } from "./chattargets";
 import { loadPractice } from "./practice";
 import type { AnswerLog } from "./srs";
 
 export const CHAT_VIEW = "english-learning-chat";
 const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article, review } }
-/** AI 回覆的朗讀方式（每台裝置各自設定）：system＝系統語音（立即）、natural＝Gemini 自然語音（慢幾秒、用每日額度）、off＝不自動朗讀。 */
+/** AI 回覆的朗讀方式（每台裝置各自設定）：natural＝Gemini 自然語音（預設）、system＝系統語音、off＝不自動朗讀。 */
 export const LS_CHAT_VOICE = "english-learning:chat-voice";
 const LS_CHAT_VOICE_LAST = "english-learning:chat-voice-last";
 export type ChatVoice = "system" | "natural" | "off";
@@ -57,6 +58,7 @@ export class ChatView extends ItemView {
 	private doneTargets = new Set<string>(); // 已在這次對話中用對的 qid
 	private targetsEl: HTMLElement | null = null;
 	private recorder: WavRecorder | null = null;
+	private speechGen = 0; // 每次停止朗讀就加一，進行中的朗讀看到變了就不再播
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -143,8 +145,8 @@ export class ChatView extends ItemView {
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "AI 回覆朗讀" });
 			const sel = r.createEl("select", { cls: "dropdown" });
-			sel.createEl("option", { text: "系統語音（立即）", value: "system" });
-			sel.createEl("option", { text: "自然語音（慢幾秒、用每日額度）", value: "natural" });
+			sel.createEl("option", { text: "自然語音（Gemini）", value: "natural" });
+			sel.createEl("option", { text: "系統語音（立即、不用額度）", value: "system" });
 			sel.createEl("option", { text: "不自動朗讀", value: "off" });
 			sel.value = this.voice();
 			sel.onchange = () => this.app.saveLocalStorage(LS_CHAT_VOICE, sel.value);
@@ -166,6 +168,12 @@ export class ChatView extends ItemView {
 				this.app.saveLocalStorage(LS_CHAT, all);
 				this.startNew(TOPICS.find((t) => t.id === topicId) ?? TOPICS[0], topicId === "article" ? articlePath : undefined, review);
 			};
+		});
+
+		el.createDiv({ cls: "el-row" }, (r) => {
+			const b = r.createEl("button", { text: "AI 速度測試" });
+			b.onclick = () => new SpeedTestModal(this.app, p).open();
+			r.createSpan({ cls: "el-muted", text: "對話很慢時按這個，量看看是哪裡慢" });
 		});
 
 		// 之前的對話
@@ -470,11 +478,11 @@ export class ChatView extends ItemView {
 	// ---- 朗讀 ----
 	private voice(): ChatVoice {
 		const v = this.app.loadLocalStorage(LS_CHAT_VOICE);
-		return v === "natural" || v === "off" ? v : "system";
+		return v === "system" || v === "off" ? v : "natural"; // 預設用 Gemini 自然語音
 	}
 
 	private lastVoiceOn(): ChatVoice {
-		return this.app.loadLocalStorage(LS_CHAT_VOICE_LAST) === "natural" ? "natural" : "system";
+		return this.app.loadLocalStorage(LS_CHAT_VOICE_LAST) === "system" ? "system" : "natural";
 	}
 
 	/** 必須在點擊事件裡同步呼叫：iOS 之後才允許自動播放。 */
@@ -486,6 +494,7 @@ export class ChatView extends ItemView {
 	}
 
 	private stopVoice() {
+		this.speechGen++;
 		stopSpeaking();
 		stopAudio();
 	}
@@ -493,13 +502,27 @@ export class ChatView extends ItemView {
 	/** 唸一句英文（自動朗讀與 🔊 共用）。手動按 🔊 時，即使關了自動朗讀也會用系統語音唸。 */
 	private speakText(text: string, manual = false) {
 		const v = this.voice();
-		if (v === "natural") this.plugin.say(text, undefined, { noSave: true });
-		else if (v === "system" || manual) speak(this.app, text).catch((e) => this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`));
+		const system = () => speak(this.app, text).catch((e) => this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`));
+		if (v === "natural") {
+			const gen = this.speechGen;
+			const stopped = () => this.speechGen !== gen;
+			// 第一句先產生先播；拿不到自然語音（額度、網路）就改用系統語音
+			this.plugin.pronouncer
+				.speakNatural(text, stopped)
+				.then((ok) => {
+					if (!ok && !stopped()) void system();
+				})
+				.catch(() => !stopped() && void system());
+		} else if (v === "system" || manual) void system();
 	}
 
 	private speakReply(text: string) {
 		if (!text || this.voice() === "off") return;
-		this.speakText(text);
+		try {
+			this.speakText(text);
+		} catch (e) {
+			this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`); // 朗讀失敗不影響對話
+		}
 	}
 
 	/** 糾正與「怎麼說」都記進句子本（同一句不重複）。 */

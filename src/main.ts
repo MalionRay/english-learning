@@ -24,6 +24,7 @@ import { parseBank } from "./generate";
 import { PHRASES_VIEW, PhrasesView, STATS_VIEW, StatsView, WORDS_VIEW, WordsView } from "./wordviews";
 import { CHAT_VIEW, ChatView } from "./chatview";
 import { PatternModal } from "./patternview";
+import { SpeedTestModal } from "./speedtest";
 import type { PhraseLog } from "./chat";
 import { cachedZh, translateMany } from "./translate";
 import { IRREGULAR, aiLemma, suffixCandidates } from "./lemma";
@@ -112,6 +113,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
 		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
 		this.addCommand({ id: "patterns", name: "分析常見錯誤", callback: () => new PatternModal(this.app, this).open() });
+		this.addCommand({ id: "speed-test", name: "AI 速度測試", callback: () => new SpeedTestModal(this.app, this).open() });
 		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
 		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
