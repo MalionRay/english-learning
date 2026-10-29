@@ -6,6 +6,7 @@ export const HOME_VIEW = "english-learning-home";
 export const LS_DEVICE_ID = "english-learning:device-id";
 export const LS_USER = "english-learning:user";
 export const LS_FALLBACK_KEY = "english-learning:fallback-api-key"; // 僅在沒有 SecretStorage 時使用
+export const LS_FALLBACK_CLOUD_KEY = "english-learning:fallback-cloud-key"; // 同上，Google Cloud 語音的金鑰
 
 export const REMOTELY_SAVE_SYNC = "remotely-save:start-sync";
 
@@ -25,6 +26,11 @@ export interface Settings {
 	ttsDailyCap: number; // 每台裝置每天最多產生幾段 Gemini 語音
 	prefetchAudio: boolean; // 出題後預先產生錄音
 	prefetchGemini: boolean; // 預先產生時也用 Gemini 語音（免費版每天只有 10 段，預設只用字典真人錄音）
+	// Google Cloud 語音（Chirp 3 HD）：每月前 100 萬字免費；金鑰在 SecretStorage
+	cloudTts: boolean;
+	cloudKeySecretName: string;
+	cloudVoice: string;
+	cloudMonthlyCap: number;
 	newPerDay: number; // 每種題型每天最多幾題新題（0＝不限）
 }
 
@@ -43,5 +49,9 @@ export const DEFAULTS: Settings = {
 	ttsDailyCap: 10, // Gemini 語音免費版：每天 10 段（2026-10-29 實測 429 訊息）
 	prefetchAudio: true,
 	prefetchGemini: false,
+	cloudTts: false,
+	cloudKeySecretName: "",
+	cloudVoice: "Kore",
+	cloudMonthlyCap: 800_000,
 	newPerDay: 10,
 };

@@ -6,6 +6,7 @@ import {
 	HOME_VIEW,
 	LS_DEVICE_ID,
 	LS_FALLBACK_KEY,
+	LS_FALLBACK_CLOUD_KEY,
 	LS_USER,
 	REMOTELY_SAVE_SYNC,
 	Settings,
@@ -59,6 +60,7 @@ export default class EnglishLearningPlugin extends Plugin {
 			deviceId: this.deviceId,
 			settings: () => this.settings,
 			apiKey: () => this.getApiKey(),
+			cloudKey: () => this.getCloudKey(),
 			systemSpeak: (t, r) => speak(this.app, t, r),
 			log: (source, extra) => {
 				this.writeEntry(this.entry("tts", { source, ...extra })).catch(() => undefined);
@@ -228,6 +230,17 @@ export default class EnglishLearningPlugin extends Plugin {
 		if (ss && this.settings.apiKeySecretName) return ss.getSecret(this.settings.apiKeySecretName);
 		if (!ss) {
 			const k = this.app.loadLocalStorage(LS_FALLBACK_KEY);
+			return typeof k === "string" && k ? k : null;
+		}
+		return null;
+	}
+
+	/** Google Cloud 語音的金鑰（另一個有付費帳戶的專案）。 */
+	getCloudKey(): string | null {
+		const ss = (this.app as App & { secretStorage?: obsidian.SecretStorage }).secretStorage;
+		if (ss && this.settings.cloudKeySecretName) return ss.getSecret(this.settings.cloudKeySecretName);
+		if (!ss) {
+			const k = this.app.loadLocalStorage(LS_FALLBACK_CLOUD_KEY);
 			return typeof k === "string" && k ? k : null;
 		}
 		return null;
