@@ -80,3 +80,23 @@ test("每日新題上限", async () => {
 	await sleep(30);
 	assert.equal(view.items.length, 1);
 });
+
+test("克漏字答錯後，句子練習會出現整句", async () => {
+	const { view, btn } = setup();
+	await view.onOpen();
+	await sleep(30);
+	const card = (name: string) => [...view.contentEl.querySelectorAll(".el-type-card")].find((c: any) => c.querySelector(".el-title").textContent === name) as any;
+	card("克漏字").querySelector("button").click();
+	await sleep(30);
+	btn("我不知道").click();
+	view.contentEl.querySelector(".el-quit").click();
+	await sleep(30);
+	btn("換一種題型").click();
+	await sleep(30);
+	card("句子").querySelector("button").click();
+	await sleep(30);
+	assert.match(view.contentEl.textContent, /之前克漏字答錯的句子/);
+	assert.match(view.contentEl.querySelector(".el-qword").textContent, /湯姆打開窗戶/);
+	btn("看答案（自己判斷）").click();
+	assert.match(view.contentEl.textContent, /Tom opened the window because the room was hot\./);
+});

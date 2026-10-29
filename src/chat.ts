@@ -1,6 +1,6 @@
 // 英文對話：提示詞、回覆格式、對話檔、句子本。這個檔案不碰 Vault（除了型別），方便測試。
 import type { ChatTurn } from "./ai";
-import type { Level } from "./generate";
+import type { ChoiceQ, Level, Question, TranslateQ } from "./generate";
 import { audioKey } from "./pronounce";
 
 export const CONV_DIR = "conversations";
@@ -193,7 +193,7 @@ export interface PhraseLog {
 	en?: string;
 	alt?: string;
 	note?: string;
-	source?: "correction" | "howto" | "pattern";
+	source?: PhraseSource;
 	original?: string;
 	conv?: string;
 }
@@ -204,9 +204,49 @@ export interface PhraseItem {
 	en: string;
 	alt?: string;
 	note?: string;
-	source: "correction" | "howto" | "pattern";
+	source: PhraseSource;
 	original?: string;
 	addedAt: string;
+	bank?: string; // 題庫來的句子：來源題庫
+}
+
+/** 句子本的來源：對話糾正、問怎麼說、錯誤分析練習句、答錯的克漏字／翻譯／聽力。 */
+export type PhraseSource = "correction" | "howto" | "pattern" | "cloze" | "translate" | "listening";
+
+export const PHRASE_SOURCE_LABEL: Record<PhraseSource, string> = {
+	correction: "被糾正",
+	howto: "問過怎麼說",
+	pattern: "常見錯誤練習",
+	cloze: "克漏字答錯",
+	translate: "翻譯答錯",
+	listening: "聽力沒聽懂",
+};
+
+/** 題目答錯時可以變成句子練習的句子（qid → 句子）。 */
+export interface FailedSentence {
+	en: string;
+	zh: string; // 可能是空的（舊題庫沒有翻譯），練習時再即時翻譯
+	note?: string;
+	source: "cloze" | "translate" | "listening";
+	bank: string;
+}
+
+/** 從題目與聽力句子建立「答錯就進句子本」的對照表。 */
+export function failedSentenceMap(items: { q: Question; bank: { sourceId: string } }[], listening: { id: string; text: string; zh?: string; bank: string }[] = []): Map<string, FailedSentence> {
+	const m = new Map<string, FailedSentence>();
+	for (const { q, bank } of items) {
+		if (q.type === "cloze") {
+			const c = q as ChoiceQ;
+			const ans = c.options[c.answer];
+			if (!ans || !c.prompt.includes("____")) continue;
+			m.set(q.id, { en: c.prompt.replace("____", ans).replace(/\s+/g, " ").trim(), zh: c.promptZh ?? "", note: c.explanation, source: "cloze", bank: bank.sourceId });
+		} else if (q.type === "translate") {
+			const t = q as TranslateQ;
+			if (t.reference && t.prompt) m.set(q.id, { en: t.reference, zh: t.prompt, note: t.explanation, source: "translate", bank: bank.sourceId });
+		}
+	}
+	for (const d of listening) m.set(d.id, { en: d.text, zh: d.zh ?? "", source: "listening", bank: d.bank });
+	return m;
 }
 
 export function phraseKey(en: string): string {
@@ -217,16 +257,28 @@ export function phraseQid(key: string): string {
 	return PHRASE_PREFIX + key;
 }
 
-export function buildPhraseBook(logs: { type: string; ts: string; id: string }[]): PhraseItem[] {
+/**
+ * 句子本：phrase-add／phrase-remove，加上答錯（或按「我不知道」）的克漏字、翻譯、聽力句子。
+ * 依時間重播：移除後如果又答錯，會再出現。
+ */
+export function buildPhraseBook(logs: { type: string; ts: string; id: string }[], failed: Map<string, FailedSentence> = new Map()): PhraseItem[] {
 	const seen = new Set<string>();
-	const list = (logs as PhraseLog[])
-		.filter((e) => (e.type === "phrase-add" || e.type === "phrase-remove") && e.id && !seen.has(e.id) && !!seen.add(e.id))
+	type Ev = PhraseLog | { type: "answer" | "grade"; id: string; ts: string; qid: string; correct?: boolean; relearn?: boolean };
+	const list = (logs as Ev[])
+		.filter((e) => e.id && !seen.has(e.id) && !!seen.add(e.id))
+		.filter((e) => e.type === "phrase-add" || e.type === "phrase-remove" || ((e.type === "answer" || e.type === "grade") && e.correct === false && !("relearn" in e && e.relearn) && failed.has(e.qid)))
 		.sort((a, b) => (a.ts < b.ts ? -1 : 1));
 	const items = new Map<string, PhraseItem>();
 	for (const e of list) {
 		if (e.type === "phrase-remove") items.delete(e.key);
-		else if (e.zh && e.en)
-			items.set(e.key, { key: e.key, zh: e.zh, en: e.en, alt: e.alt, note: e.note, source: e.source ?? "howto", original: e.original, addedAt: items.get(e.key)?.addedAt ?? e.ts });
+		else if (e.type === "phrase-add") {
+			if (e.zh && e.en)
+				items.set(e.key, { key: e.key, zh: e.zh, en: e.en, alt: e.alt, note: e.note, source: e.source ?? "howto", original: e.original, addedAt: items.get(e.key)?.addedAt ?? e.ts });
+		} else {
+			const f = failed.get((e as { qid: string }).qid)!;
+			const key = phraseKey(f.en);
+			if (!items.has(key)) items.set(key, { key, zh: f.zh, en: f.en, note: f.note, source: f.source, addedAt: e.ts, bank: f.bank });
+		}
 	}
 	return [...items.values()].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));
 }

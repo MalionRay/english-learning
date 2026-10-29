@@ -109,3 +109,11 @@
 /* 錯誤模式分析 */
 .el-drill { gap: 6px; align-items: baseline; cursor: pointer; }
 .el-drill input { flex: none; }
+
+/* 對話中的 SRS 複習 */
+.el-chat-targets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px; }
+.el-chat-targets:empty { display: none; }
+.el-target-chip { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--background-modifier-border); background: var(--background-secondary); font-size: var(--font-ui-small); cursor: pointer; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.el-target-chip.is-done { background: var(--background-modifier-success, rgba(0, 160, 80, 0.15)); border-color: var(--color-green, #2a9d50); }
+.el-target-word { text-decoration: underline dotted var(--text-accent); text-underline-offset: 3px; font-weight: 600; }
+.el-chat-reviewed { align-self: center; margin: 4px auto; font-size: var(--font-ui-small); color: var(--color-green, #2a9d50); }

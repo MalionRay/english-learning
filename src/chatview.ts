@@ -21,8 +21,12 @@ import {
 	phraseKey,
 } from "./chat";
 
+import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets } from "./chattargets";
+import { loadPractice } from "./practice";
+import type { AnswerLog } from "./srs";
+
 export const CHAT_VIEW = "english-learning-chat";
-const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article } }
+const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article, review } }
 
 function localDate(d = new Date()): string {
 	const p = (n: number) => String(n).padStart(2, "0");
@@ -38,6 +42,9 @@ export class ChatView extends ItemView {
 	private topic: Topic = TOPICS[0];
 	private sending = false;
 	private listEl: HTMLElement | null = null;
+	private targets: ChatTarget[] = []; // 這次對話要複習的生字與句子
+	private doneTargets = new Set<string>(); // 已在這次對話中用對的 qid
+	private targetsEl: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -79,9 +86,9 @@ export class ChatView extends ItemView {
 		el.createEl("h3", { text: "英文對話" });
 		el.createDiv({
 			cls: "el-muted",
-			text: "用英文聊天；說錯會即時糾正。不會說的可以直接打中文問「…英文怎麼說」。糾正過的句子和問過的說法會記進「句子本」，之後在練習裡複習。",
+			text: "用英文聊天；說錯會即時糾正。不會說的可以直接打中文問「…英文怎麼說」。糾正過的句子和問過的說法會記進「句子本」，之後在練習裡複習。到期的生字和句子會在聊天中自然出現，你用對了就算複習。",
 		});
-		const prefs = ((this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, { topic?: string; article?: string }>)[p.user] ?? {};
+		const prefs = ((this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, { topic?: string; article?: string; review?: boolean }>)[p.user] ?? {};
 
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "使用者" });
@@ -121,6 +128,13 @@ export class ChatView extends ItemView {
 		});
 		// 讓文章選單出現在情境下面
 		el.appendChild(artRow);
+		let review = prefs.review !== false;
+		el.createEl("label", { cls: "el-row" }, (r) => {
+			const box = r.createEl("input", { type: "checkbox" });
+			box.checked = review;
+			box.onchange = () => (review = box.checked);
+			r.createSpan({ text: "聊天中自然複習到期的生字和句子（用對了就算複習一次）" });
+		});
 
 		el.createDiv({ cls: "el-row el-big-buttons" }, (r) => {
 			const go = r.createEl("button", { text: "開始對話", cls: "mod-cta" });
@@ -165,7 +179,25 @@ export class ChatView extends ItemView {
 		return stripMarks(stripFrontmatter(await this.app.vault.cachedRead(f))).trim().slice(0, 12000);
 	}
 
-	private async startNew(topic: Topic, articlePath?: string) {
+	/** 挑這次要複習的生字與句子；已在這個對話中用對的標成完成。 */
+	private async loadTargets(review: boolean, convPath: string) {
+		this.targets = [];
+		this.doneTargets = new Set();
+		if (!review) return;
+		try {
+			const d = await loadPractice(this.app, this.plugin.user, this.level());
+			for (const e of d.logs) if (e.type === "answer" && (e as AnswerLog).via === "chat" && (e as AnswerLog).session === convPath) this.doneTargets.add((e as AnswerLog).qid);
+			this.targets = pickTargets(d.words, d.phrases, d.states);
+		} catch (e) {
+			this.plugin.debug(`chat targets failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+
+	private activeTargets(): ChatTarget[] {
+		return this.targets.filter((t) => !this.doneTargets.has(t.qid));
+	}
+
+	private async startNew(topic: Topic, articlePath?: string, review = true) {
 		const p = this.plugin;
 		if (!p.getApiKey()) return new Notice("尚未設定 API key");
 		if (navigator.onLine === false) return new Notice("對話需要網路");
@@ -180,18 +212,20 @@ export class ChatView extends ItemView {
 		const path = normalizePath(`${CONV_DIR}/${base}-${n}.md`);
 		if (!(await this.app.vault.adapter.exists(CONV_DIR))) await this.app.vault.createFolder(CONV_DIR).catch(() => undefined);
 		this.file = await this.app.vault.create(path, convHeader(this.meta));
+		await this.loadTargets(review, path);
 		this.messages = [];
 		this.phase = "chat";
 		this.drawChat();
 		await this.send(null); // AI 開場
 	}
 
-	private async resume(f: TFile, fm: ConvMeta) {
+	private async resume(f: TFile, fm: ConvMeta, review = true) {
 		this.meta = { ...fm, level: fm.level === "kid" ? "kid" : "adult" };
 		this.topic = TOPICS.find((t) => t.id === fm.topic) ?? TOPICS[0];
 		this.article = await this.loadArticle(fm.article);
 		this.file = f;
 		this.messages = parseConvMessages(await this.app.vault.read(f));
+		await this.loadTargets(review, f.path);
 		this.phase = "chat";
 		this.drawChat();
 		for (const m of this.messages) this.renderMessage(m);
@@ -204,6 +238,8 @@ export class ChatView extends ItemView {
 		top.createSpan({ cls: "el-badge", text: this.topic.label });
 		const end = top.createEl("a", { text: "結束對話", cls: "el-quit" });
 		end.onclick = () => this.end();
+		this.targetsEl = el.createDiv({ cls: "el-chat-targets" });
+		this.drawTargets();
 
 		this.listEl = el.createDiv({ cls: "el-chat-list" });
 		const bar = el.createDiv({ cls: "el-chat-input" });
@@ -224,6 +260,37 @@ export class ChatView extends ItemView {
 		});
 	}
 
+	/** 這次複習的目標：用對的打勾；點一下看中文。 */
+	private drawTargets() {
+		const el = this.targetsEl;
+		if (!el) return;
+		el.empty();
+		if (!this.targets.length) return;
+		el.createSpan({ cls: "el-muted", text: "🎯 這次會複習：" });
+		for (const t of this.targets) {
+			const done = this.doneTargets.has(t.qid);
+			const chip = el.createSpan({ cls: `el-target-chip${done ? " is-done" : ""}${t.kind === "phrase" ? " is-phrase" : ""}`, text: `${done ? "✓ " : ""}${t.kind === "word" ? t.en : t.zh || t.en}` });
+			chip.onclick = () => new Notice(`${t.en}${t.zh ? `\n${t.zh}` : ""}${t.forms.length ? `\n（也包含：${t.forms.join("、")}）` : ""}`, 8000);
+		}
+	}
+
+	/** 學習者在對話中用對了目標：記一筆複習。 */
+	private async recordUsed(learnerText: string, rawReply: string, corrected: boolean) {
+		const active = this.activeTargets();
+		if (!active.length || !this.file) return;
+		const used = usedTargets(active, learnerText, parseLearnerUsed(rawReply), corrected);
+		if (!used.length) return;
+		const p = this.plugin;
+		for (const t of used) {
+			this.doneTargets.add(t.qid);
+			await p.appendLog(
+				p.makeEntry("answer", { qid: t.qid, bank: "words", qtype: t.kind === "word" ? "word" : "phrase", session: this.file.path, correct: true, via: "chat" }),
+			);
+		}
+		this.listEl?.createDiv({ cls: "el-chat-reviewed", text: `✓ 複習到：${used.map((t) => (t.kind === "word" ? t.en : t.zh || t.en)).join("、")}` });
+		this.drawTargets();
+	}
+
 	private async send(text: string | null) {
 		const p = this.plugin;
 		if (!this.meta || !this.file) return;
@@ -238,7 +305,7 @@ export class ChatView extends ItemView {
 		typing?.scrollIntoView({ block: "end" });
 		try {
 			const res = await p.backend().chat(historyTurns(this.messages), {
-				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined),
+				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) + targetsPrompt(this.activeTargets(), this.meta.level),
 				json: true,
 				maxOutputTokens: 1024,
 				temperature: 0.7,
@@ -250,6 +317,7 @@ export class ChatView extends ItemView {
 			const reply = parseReply(res.text);
 			this.renderMessage(mm, reply);
 			await this.savePhrases(reply);
+			if (text !== null) await this.recordUsed(text, res.text, !!reply.correction);
 			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage })).catch(() => undefined);
 		} catch (e) {
 			typing?.setText(`AI 沒有回應：${(e as Error)?.message ?? e}（可以再送一次）`);
@@ -292,13 +360,14 @@ export class ChatView extends ItemView {
 				if (h.note) box.createDiv({ cls: "el-muted", text: h.note });
 			}
 			const b = list.createDiv({ cls: "el-bubble el-bubble-ai" });
-			this.englishLine(b, r.reply, r.replyZh);
+			this.englishLine(b, r.reply, r.replyZh, true);
 		}
 		list.lastElementChild?.scrollIntoView({ block: "end" });
 	}
 
 	/** 英文：逐字可點（唸、看中文、加入生字本）、🔊 唸整句、「中」看翻譯。 */
-	private englishLine(parent: HTMLElement, text: string, zh?: string) {
+	private englishLine(parent: HTMLElement, text: string, zh?: string, markTargets = false) {
+		const targetWords = markTargets ? this.activeTargets().filter((t) => t.kind === "word") : [];
 		const wrap = parent.createDiv({ cls: "el-line-wrap" });
 		const line = wrap.createDiv({ cls: "el-line" });
 		const words = line.createSpan({ cls: "el-words" });
@@ -310,6 +379,7 @@ export class ChatView extends ItemView {
 			}
 			if (m[1]) words.appendChild(document.createTextNode(m[1]));
 			const w = words.createSpan({ cls: "el-w", text: m[2] });
+			if (targetWords.some((t) => !t.en.includes(" ") && mentionsWord(m[2], t))) w.addClass("el-target-word"); // AI 用到了複習的字
 			w.onclick = (e) => this.wordMenu(e, m[2], text);
 			if (m[3]) words.appendChild(document.createTextNode(m[3]));
 		}
@@ -359,11 +429,14 @@ export class ChatView extends ItemView {
 		const fixes = this.messages.filter((m) => m.role === "model").map((m) => parseReply(m.text));
 		const nFix = fixes.filter((r) => r.correction).length;
 		const nHow = fixes.reduce((n, r) => n + r.howto.length, 0);
-		new Notice(`對話結束：糾正 ${nFix} 句、學了 ${nHow} 個說法，都已記進句子本。`, 6000);
+		const nRev = this.targets.filter((t) => this.doneTargets.has(t.qid)).length;
+		new Notice(`對話結束：糾正 ${nFix} 句、學了 ${nHow} 個說法，都已記進句子本。${this.targets.length ? `複習到 ${nRev}／${this.targets.length} 個生字和句子。` : ""}`, 6000);
 		this.phase = "start";
 		this.meta = null;
 		this.file = null;
 		this.messages = [];
+		this.targets = [];
+		this.doneTargets = new Set();
 		this.drawStart();
 		this.plugin.triggerSync(true);
 	}

@@ -73,7 +73,9 @@
 - AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
-- 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53）；練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
+- 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53），加上自動推導的「答錯的句子」：克漏字（含我不知道，整句＝填入答案）、翻譯題（reference／prompt；含 grade 判錯）、聽力（沒聽懂）；relearn 不算；移除後又答錯會再出現（failedSentenceMap＋buildPhraseBook）；舊題庫沒有中文時練習當下即時翻譯
+- 對話中的 SRS 複習（src/chattargets.ts）：開始或續聊時挑到期的生字 5 個、句子 2 句（上次答錯優先；到期不夠才補少量沒複習過的），加進系統提示請 AI 自然使用並製造機會；AI 回 learnerUsed；單字要訊息裡真的出現（含變化形）才算，沒被糾正時就算 AI 沒報也算；用對了記 answer（qid word:/phrase:、correct true、via "chat"、session＝對話檔路徑），每次對話每個目標只記一次；開始畫面可關閉
+- 練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
 
 ## 錯誤模式分析（src/patterns.ts、src/patternview.ts）
 - 收集最近 60 天的錯誤：翻譯／句子題分數 < 90 且有修正、克漏字打錯（不含「我不知道」）、這位使用者對話裡的 correction；同一句只留一次，最新的最多 80 筆；少於 5 筆不呼叫 AI
