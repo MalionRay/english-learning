@@ -11,7 +11,7 @@
 - SRS 狀態不落檔，啟動時從所有 log 重算
 - 只在匯入來源的裝置出題，以 frontmatter status 防重複
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
-- 兩個模型：geminiModel（出題、修正題、錯誤分析、拍照辨識）與 fastModel（對話、批改、翻譯、查原形；plugin.fastBackend()，FallbackBackend 在模型不存在或當日額度用完時改用 geminiModel）。iPad 實測 2026-10-29：gemini-3.5-flash-lite 的對話大小請求 22～25 秒，gemini-3.1-flash-lite-preview 1.6 秒，所以 fastModel 預設後者
+- 兩個模型：geminiModel（出題、修正題、錯誤分析、拍照辨識）與 fastModel（對話、批改、翻譯、查原形；plugin.fastBackend()，FallbackBackend 在模型不存在或當日額度用完時改用 geminiModel）。iPad 實測 2026-10-29：免費版延遲變化很大（3.5-flash-lite 常 20～37 秒，3.1-flash-lite 多半 1.6 秒），fastModel 預設 gemini-3.1-flash-lite（舊值 -preview 自動換掉）
 - AI 錯誤用 classifyError 轉成中文（AIError.kind：daily／minute／auth／model／server／network）；每日額度用完後同一模型當天不再呼叫（太平洋時間）
 
 ## 開發順序
@@ -34,6 +34,8 @@
 - 單字題附 IPA（美式）；題庫中的英文包在 <span class="el-say">，點擊即用系統語音朗讀（src/tts.ts）
 - 發音順序（src/pronounce.ts）：已存錄音 → 字典真人錄音（單字，dictionaryapi.dev）→ Gemini TTS → 系統語音
 - 錄音存 english/audio/<deviceId>/<hash>.mp3|wav（單一寫入者；檔名是正規化文字的 cyrb53 雜湊），任何裝置都可讀
+- Gemini TTS 免費版每天只有 10 段（所有裝置共用，429 訊息寫 10 requests per day）：ttsDailyCap 預設 10（舊值 100 自動換掉）；預先產生錄音預設只用字典真人錄音（prefetchGemini 預設關）；對話朗讀在 ttsDailyCap ≤ 20 時整段一次產生、不切句；用完一天提醒一次並改系統語音
+- 系統語音預設挑 iOS 的 Premium（高品質）> Enhanced（優化）英文語音（voiceQuality 看 voiceURI／name）
 - Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；429 內容提到 per day 才當天停用，其他 429（每分鐘上限）只暫停 60 秒；預先產生錄音遇到每分鐘上限或對話正在用語音（speakNatural 後 5 分鐘）會等 30 秒再試；設定有每日上限
 - 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）
@@ -72,6 +74,7 @@
 
 ## 英文對話與句子本（src/chat.ts、src/chatview.ts）
 - AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
+- 對話角色：成人 Alex（32 歲、Portland、設計師、去過台灣）、小孩 Mia（12 歲、Seattle）；提示要求針對細節回應、分享自己的經驗、不要制式稱讚開頭、口語、每次最多一個問題；temperature 0.9（使用者回饋 3.1-flash-lite 的回答很機械）
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53），加上自動推導的「答錯的句子」：克漏字（含我不知道，整句＝填入答案）、翻譯題（reference／prompt；含 grade 判錯）、聽力（沒聽懂）；relearn 不算；移除後又答錯會再出現（failedSentenceMap＋buildPhraseBook）；舊題庫沒有中文時練習當下即時翻譯
