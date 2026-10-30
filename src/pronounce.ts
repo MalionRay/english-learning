@@ -414,9 +414,11 @@ export class Pronouncer {
 			try {
 				const got = await this.fetchDict(text);
 				if (got) {
+					// 先播放再存檔，少等一點
+					const playing = playBuffer(got, "audio/mpeg", rate);
 					await this.save(key, "mp3", got);
 					this.d.log("dict", { text });
-					await playBuffer(got, "audio/mpeg", rate);
+					await playing;
 					return "dict";
 				}
 				this.markDictMiss(text);

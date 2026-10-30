@@ -105,3 +105,29 @@ export async function inlineMeaning(app: App, getAi: () => AIBackend, word: stri
 		tag.textContent = `無法翻譯：${(e as Error)?.message ?? e}`;
 	}
 }
+
+/** 不值得預先查的常見字。 */
+const COMMON = new Set(
+	"a an the i me my you your he him his she her it its we us our they them their is am are was were be been being do does did have has had will would can could should may might must to of in on at for with from by as and or but so if not no yes this that these those there here what who how why when where which just very really too also about up out oh ok okay".split(" "),
+);
+
+/** 一段英文裡值得預先查中文的字（小寫、去重、跳過常見字與已查過的）。 */
+export function wordsToPrefetch(app: App, text: string, max = 30): string[] {
+	const out: string[] = [];
+	for (const m of text.toLowerCase().replace(/[’‘]/g, "'").match(/[a-z][a-z'-]*[a-z]|[a-z]/g) ?? []) {
+		const w = m.replace(/'s$/, "");
+		if (w.length < 3 || COMMON.has(w) || out.includes(w) || cachedZh(app, w)) continue;
+		out.push(w);
+		if (out.length >= max) break;
+	}
+	return out;
+}
+
+/** 背景先把這段英文裡的字一次查好（一次呼叫），之後點字就會立刻出現中文。失敗就算了。 */
+export async function prefetchMeanings(app: App, ai: AIBackend, text: string): Promise<number> {
+	const words = wordsToPrefetch(app, text);
+	if (!words.length) return 0;
+	if (typeof navigator !== "undefined" && navigator.onLine === false) return 0;
+	await translateMany(app, ai, words);
+	return words.length;
+}

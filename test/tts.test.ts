@@ -40,3 +40,16 @@ test("看中文意思：顯示在字的旁邊，再按一次收起來", async ()
 	await inlineMeaning(app, () => ai, "gentle", w); // 再按一次收起來
 	assert.equal(line.textContent, "gentle voice");
 });
+
+test("預先查回覆裡的字：跳過常見字、短字、已查過的，一次查完", async () => {
+	const { wordsToPrefetch, prefetchMeanings, cachedZh } = require("../src/translate");
+	const { app } = makeApp();
+	assert.deepEqual(wordsToPrefetch(app, "Oh nice! I went hiking with my dog's friends at the lake."), ["nice", "went", "hiking", "dog", "friends", "lake"]);
+	let calls = 0;
+	const ai: any = { complete: async (p: string) => (calls++, { text: JSON.stringify({ zh: p.split("\n").map((l) => "意思-" + l.replace(/^\d+\. /, "")) }), usage: {}, model: "m" }) };
+	assert.equal(await prefetchMeanings(app, ai, "Hiking near the lake"), 3);
+	assert.equal(calls, 1);
+	assert.equal(cachedZh(app, "Hiking"), "意思-hiking"); // 大小寫不同也查得到
+	assert.equal(await prefetchMeanings(app, ai, "hiking lake"), 0); // 已查過不再呼叫
+	assert.equal(calls, 1);
+});
