@@ -132,3 +132,13 @@
 /* v0.18：今日複習、對話程度 */
 .el-today-card { border-color: var(--interactive-accent); border-width: 2px; }
 .el-chat .el-level-badge { cursor: pointer; }
+
+/* v0.18.1：生字本／句子本的狀態 */
+.el-status { font-size: 0.75em; padding: 1px 8px; border-radius: 10px; white-space: nowrap; background: var(--background-modifier-hover); color: var(--text-muted); }
+.el-status.is-wrong { background: rgba(var(--color-red-rgb), 0.15); color: var(--color-red); }
+.el-status.is-learning { background: rgba(var(--color-blue-rgb), 0.15); color: var(--color-blue); }
+.el-status.is-mastered { background: rgba(var(--color-green-rgb), 0.15); color: var(--color-green); }
+.el-mastered { margin-top: 12px; }
+.el-mastered > summary { cursor: pointer; padding: 8px 0; color: var(--text-muted); }
+.el-word-card.is-mastered { opacity: 0.75; }
+.el-book-summary { margin: 6px 0; }

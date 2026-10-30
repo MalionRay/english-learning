@@ -68,6 +68,7 @@
 - 統計：連續天數、今日題數、30 天長條圖、各題型正確率（30 天）、已熟練（step ≥ 3）
 - 字形合併（src/lemma.ts）：go／went／going 合成一筆（WordItem.forms）。順序：word-add 的 lemma（加入時字看起來像變化形才請 AI 查）→ 不規則表 IRREGULAR（有歧義的字如 left、found 只在原形也在生字本時合併）→ 字尾規則（-s、-ed、-ing…）只在原形已在生字本時合併；片語不合併
 - 合併後舊 key 的複習紀錄用 aliasWordQids 在計算時改成合併後的 qid（不改 log）
+- 熟練後不自動移除（間隔拉到 240 天自然淡出；手動「移除」）。生字本／句子本每張卡片標狀態（bookStatus：還沒複習／要加強＝上次答錯／學習中／熟練 ✓＝step ≥ 3），依「要加強 → 學習中 → 還沒複習」排列，熟練的收在 details「已熟練」（搜尋時自動展開）；v0.18.1
 
 ## 聽力理解（src/dictation.ts、src/grade.ts 的 gradeListening）
 - v0.9.1 起取代逐字聽寫：聽句子，用中文寫出意思由 AI 批改（≥ 70 分算懂；離線 pending，之後由同一裝置補批），或翻面自己判斷（聽懂／部分懂＝hint／沒聽懂）

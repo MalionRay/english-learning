@@ -250,3 +250,32 @@ export function computeStats(logs: (AnswerLog | GradeLog)[], states: Map<string,
 	}
 	return { today: perDay.get(localDate(now)) ?? 0, streak, days, byType, mastered, learning, dueTomorrow };
 }
+
+// ---------------------------------------------------------------------
+// 生字本／句子本的狀態標示（熟練的預設收起來）
+
+export type BookStatus = "new" | "wrong" | "learning" | "mastered";
+
+export const BOOK_STATUS_LABEL: Record<BookStatus, string> = {
+	new: "還沒複習",
+	wrong: "要加強",
+	learning: "學習中",
+	mastered: "熟練 ✓",
+};
+
+/** 熟練＝間隔到 7 天以上（step ≥ 3，和學習統計一致）；上次答錯＝要加強。 */
+export function bookStatus(st: QState | undefined): BookStatus {
+	if (!st) return "new";
+	if (st.lastCorrect === false) return "wrong";
+	return st.step >= 3 ? "mastered" : "learning";
+}
+
+/** 分成「還在學」（要加強 → 學習中 → 還沒複習，各自保持原順序）與「熟練」。 */
+export function splitByStatus<T>(items: T[], statusOf: (x: T) => BookStatus): { active: T[]; mastered: T[]; counts: Record<BookStatus, number> } {
+	const counts: Record<BookStatus, number> = { new: 0, wrong: 0, learning: 0, mastered: 0 };
+	const order: Record<BookStatus, number> = { wrong: 0, learning: 1, new: 2, mastered: 3 };
+	const tagged = items.map((x, i) => ({ x, i, s: statusOf(x) }));
+	for (const t of tagged) counts[t.s]++;
+	tagged.sort((a, b) => order[a.s] - order[b.s] || a.i - b.i);
+	return { active: tagged.filter((t) => t.s !== "mastered").map((t) => t.x), mastered: tagged.filter((t) => t.s === "mastered").map((t) => t.x), counts };
+}
