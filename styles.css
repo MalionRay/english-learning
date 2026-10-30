@@ -128,3 +128,7 @@
 
 /* 點字看中文：顯示在字的旁邊 */
 .el-w-zh { display: inline-block; margin: 0 4px; padding: 0 6px; border-radius: 6px; background: var(--background-secondary-alt, var(--background-secondary)); color: var(--text-accent); font-size: 0.85em; line-height: 1.5; cursor: pointer; }
+
+/* v0.18：今日複習、對話程度 */
+.el-today-card { border-color: var(--interactive-accent); border-width: 2px; }
+.el-chat .el-level-badge { cursor: pointer; }

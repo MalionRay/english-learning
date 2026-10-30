@@ -30,6 +30,7 @@ import type { ChatTurn } from "./ai";
 import { SpeedTestModal } from "./speedtest";
 import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets } from "./chattargets";
 import { loadPractice } from "./practice";
+import { ChatLevel, LEVEL_LABEL, estimateChatLevel, levelPrompt } from "./chatlevel";
 import type { AnswerLog } from "./srs";
 
 export const CHAT_VIEW = "english-learning-chat";
@@ -60,6 +61,9 @@ export class ChatView extends ItemView {
 	private targetsEl: HTMLElement | null = null;
 	private recorder: WavRecorder | null = null;
 	private speechGen = 0; // 每次停止朗讀就加一，進行中的朗讀看到變了就不再播
+	private pastMessages: ConvMessage[] = []; // 這位使用者最近幾次對話的訊息（估程度用）
+	private levelEl: HTMLElement | null = null;
+	private lastLevel: ChatLevel | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -232,6 +236,39 @@ export class ChatView extends ItemView {
 		}
 	}
 
+	/** 這位使用者最近 3 次對話（不含這次）的訊息：新對話一開始就用上次的程度，不用從頭估。 */
+	private async loadPastMessages(exclude: string) {
+		this.pastMessages = [];
+		try {
+			const files = this.app.vault
+				.getMarkdownFiles()
+				.filter((f) => f.path.startsWith(CONV_DIR + "/") && f.path !== exclude)
+				.map((f) => ({ f, fm: this.app.metadataCache.getFileCache(f)?.frontmatter ?? {} }))
+				.filter((x) => x.fm.user === this.plugin.user)
+				.sort((a, b) => (String(a.fm.started ?? a.f.basename) < String(b.fm.started ?? b.f.basename) ? 1 : -1))
+				.slice(0, 3)
+				.reverse();
+			for (const { f } of files) this.pastMessages.push(...parseConvMessages(await this.app.vault.cachedRead(f)));
+			this.pastMessages = this.pastMessages.slice(-40);
+		} catch (e) {
+			this.plugin.debug(`chat past messages failed: ${(e as Error)?.message ?? e}`);
+		}
+	}
+
+	private levelEstimate() {
+		return estimateChatLevel([...this.pastMessages, ...this.messages], this.meta?.level ?? this.level());
+	}
+
+	private drawLevel() {
+		if (!this.levelEl) return;
+		const est = this.levelEstimate();
+		this.levelEl.setText(`程度：${LEVEL_LABEL[est.level]}`);
+		this.levelEl.setAttribute("aria-label", "AI 依你最近的句子自動調整說話難度");
+		if (this.lastLevel !== null && this.lastLevel !== est.level)
+			this.plugin.debug(`chat level ${this.lastLevel} → ${est.level} (fluency ${est.fluency.toFixed(2)}, ${est.samples} msgs, avg ${est.avgWords.toFixed(1)} words)`);
+		this.lastLevel = est.level;
+	}
+
 	private activeTargets(): ChatTarget[] {
 		return this.targets.filter((t) => !this.doneTargets.has(t.qid));
 	}
@@ -252,9 +289,10 @@ export class ChatView extends ItemView {
 		if (!(await this.app.vault.adapter.exists(CONV_DIR))) await this.app.vault.createFolder(CONV_DIR).catch(() => undefined);
 		this.file = await this.app.vault.create(path, convHeader(this.meta));
 		const t0 = Date.now();
-		await this.loadTargets(review, path);
+		await Promise.all([this.loadTargets(review, path), this.loadPastMessages(path)]);
 		p.debug(`chat start: ${this.targets.length} review targets in ${Date.now() - t0} ms`);
 		this.messages = [];
+		this.lastLevel = null;
 		this.phase = "chat";
 		this.drawChat();
 		await this.send(null); // AI 開場
@@ -266,7 +304,8 @@ export class ChatView extends ItemView {
 		this.article = await this.loadArticle(fm.article);
 		this.file = f;
 		this.messages = parseConvMessages(await this.app.vault.read(f));
-		await this.loadTargets(review, f.path);
+		await Promise.all([this.loadTargets(review, f.path), this.loadPastMessages(f.path)]);
+		this.lastLevel = null;
 		this.phase = "chat";
 		this.drawChat();
 		for (const m of this.messages) this.renderMessage(m);
@@ -277,6 +316,12 @@ export class ChatView extends ItemView {
 		const top = el.createDiv({ cls: "el-row el-top" });
 		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
 		top.createSpan({ cls: "el-badge", text: this.topic.label });
+		this.levelEl = top.createSpan({ cls: "el-badge el-level-badge" });
+		this.levelEl.onclick = () => {
+			const est = this.levelEstimate();
+			new Notice(`AI 說話難度：${LEVEL_LABEL[est.level]}（${est.level}/${this.meta?.level === "kid" ? 4 : 5}）\n依你最近的句子自動調整：錯得多就說短一點、簡單一點；越來越少錯就越來越像平常聊天。`, 8000);
+		};
+		this.drawLevel();
 		const vt = top.createEl("button", { cls: "el-zh-btn", text: this.voice() === "off" ? "🔇" : "🔊", attr: { "aria-label": "自動朗讀開關" } });
 		vt.onclick = () => {
 			const next: ChatVoice = this.voice() === "off" ? this.lastVoiceOn() : "off";
@@ -435,7 +480,10 @@ export class ChatView extends ItemView {
 		}, 1000);
 		try {
 			const res = await p.fastBackend().chat(turns, {
-				system: chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) + targetsPrompt(this.activeTargets(), this.meta.level),
+				system:
+					chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) +
+					levelPrompt(this.levelEstimate(), this.meta.level) +
+					targetsPrompt(this.activeTargets(), this.meta.level),
 				json: true,
 				maxOutputTokens: 1024,
 				temperature: 0.9,
@@ -462,6 +510,7 @@ export class ChatView extends ItemView {
 			this.messages.push(mm);
 			const reply = parseReply(res.text);
 			this.renderMessage(mm, reply);
+			this.drawLevel();
 			this.speakReply(reply.reply);
 			// 背景先把回覆裡的字查好中文，點字就會立刻出現
 			const forZh = [reply.reply, reply.correction?.corrected ?? "", ...reply.howto.map((h) => h.en)].join(" ");

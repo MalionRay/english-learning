@@ -108,6 +108,7 @@ test("對話畫面：到期的字放進提示，用對了記一筆複習", async
 	await view.onOpen();
 	await view.startNew({ id: "free", label: "自由聊天", prompt: "Free chat." }, undefined, true);
 	assert.match(systems[0], /1\. word: gentle {2}\(溫柔的\)/);
+	assert.match(systems[0], /Learner's current level in this chat: 3 of 5/); // 沒有紀錄：成人從「日常」開始
 	assert.ok(view.contentEl.querySelector(".el-target-chip"));
 	await view.send("My puppy is very gentle.");
 	const L = String(files.get("logs/ray/ipad-1.jsonl")).trim().split("\n").map((l) => JSON.parse(l));

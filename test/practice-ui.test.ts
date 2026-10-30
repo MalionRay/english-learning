@@ -103,3 +103,43 @@ test("克漏字答錯後，句子練習會出現整句", async () => {
 	btn("看答案（自己判斷）").click();
 	assert.match(view.contentEl.textContent, /Tom opened the window because the room was hot\./);
 });
+
+test("今日複習：各題型到期的輪流混在一起，不夠再補新題（受每日上限）", async () => {
+	const { mixSession } = await import("../src/practice");
+	const mk = (id: string) => ({ q: { id } as any, bank: {} as any, marked: false });
+	const past = Date.now() - 864e5;
+	const st = (due: number) => ({ step: 1, due, lastCorrect: true }) as any;
+	const states = new Map([
+		["w1", st(past)],
+		["w2", st(past)],
+		["w3", st(Date.now() + 5 * 864e5)], // 還沒到期
+		["c1", st(past)],
+	]);
+	const groups = [
+		{ pqs: [mk("w1"), mk("w2"), mk("w3"), mk("wn1")], newAllowed: 10 },
+		{ pqs: [mk("c1"), mk("cn1"), mk("cn2")], newAllowed: 1 },
+		{ pqs: [mk("ln1")], newAllowed: 0 },
+	];
+	const m = mixSession(groups, states, 20);
+	assert.deepEqual(m.items.map((x) => x.q.id), ["w1", "c1", "w2", "wn1", "cn1"]);
+	assert.equal(m.due, 3);
+	assert.equal(m.fresh, 2);
+	assert.equal(m.dueTotal, 3);
+	assert.equal(m.freshAvailable, 2);
+	// 題數上限：到期的優先
+	assert.deepEqual(mixSession(groups, states, 2).items.map((x) => x.q.id), ["w1", "c1"]);
+});
+
+test("今日複習按鈕：開始畫面最上面，按下去混合出題", async () => {
+	const { view, btn } = setup();
+	await view.onOpen();
+	await sleep(30);
+	const first = view.contentEl.querySelector(".el-type-card .el-title");
+	assert.equal(first.textContent, "📅 今日複習");
+	view.contentEl.querySelector(".el-today-card button").click();
+	await sleep(30);
+	assert.ok(view.items.length > 0);
+	assert.equal(view.sessionType, "mixed");
+	const types = new Set(view.items.map((x: any) => (x.word ? "word" : x.dict ? "listening" : x.phrase ? "phrase" : x.q.type)));
+	assert.ok(types.size >= 3, `mixed types: ${[...types].join(",")}`);
+});
