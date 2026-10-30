@@ -40,7 +40,7 @@
 - Gemini TTS 每日計數存 localStorage，以太平洋時間的日期為準；429 內容提到 per day 才當天停用，其他 429（每分鐘上限）只暫停 60 秒；預先產生錄音遇到每分鐘上限或對話正在用語音（speakNatural 後 5 分鐘）會等 30 秒再試；設定有每日上限
 - 播放前必須在 click handler 同步呼叫 unlockAudio()（iOS 自動播放限制）
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）；選單（tts.voicePicker，設定頁與對話開始畫面都有）高品質排前面、選了直接用系統語音試唸
-- 點字「看中文意思」用 translate.inlineMeaning：意思顯示在字的旁邊（span.el-w-zh，先「查詢中…」，再按一次收起來；找不到字的位置才用 noticeMeaning 提示框）；translateMany 有 hedge 6 秒、逾時 25 秒
+- 點字「看中文意思」用 translate.inlineMeaning：意思顯示在字的旁邊（span.el-w-zh，先「查詢中…」，再按一次收起來；找不到字的位置才用 noticeMeaning 提示框）；translateMany 有 hedge 6 秒、逾時 25 秒；對話 AI 回覆出現 1.5 秒後在背景 prefetchMeanings（回覆、修正句、怎麼說裡的字，跳過常見字與已快取的，一次呼叫），點字就立刻有中文；字典真人錄音也改成先播放再存檔
 
 ## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
 - 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）

@@ -4,7 +4,7 @@ import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
 import { stripMarks } from "./generate";
 import { listSources, stripFrontmatter } from "./sources";
-import { cachedZh, inlineMeaning, translateMany } from "./translate";
+import { cachedZh, inlineMeaning, prefetchMeanings, translateMany } from "./translate";
 import {
 	CONV_DIR,
 	ChatReply,
@@ -463,6 +463,11 @@ export class ChatView extends ItemView {
 			const reply = parseReply(res.text);
 			this.renderMessage(mm, reply);
 			this.speakReply(reply.reply);
+			// 背景先把回覆裡的字查好中文，點字就會立刻出現
+			const forZh = [reply.reply, reply.correction?.corrected ?? "", ...reply.howto.map((h) => h.en)].join(" ");
+			window.setTimeout(() => {
+				prefetchMeanings(this.app, p.fastBackend(), forZh).catch((e) => p.debug(`prefetch meanings failed: ${(e as Error)?.message ?? e}`));
+			}, 1500);
 			await p.appendText(file, convBlock(mm));
 			await this.savePhrases(reply);
 			if (learnerText !== null) await this.recordUsed(learnerText, res.text, !!reply.correction);
