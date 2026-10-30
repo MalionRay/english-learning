@@ -332,8 +332,10 @@ export class CloudTtsModal extends Modal {
 				t.inputEl.spellcheck = false;
 				t.setPlaceholder(p.getCloudKey() ? "（已設定，要換才貼）" : "AIza…");
 				t.onChange(async (v) => {
-					const key = v.trim();
+					// 只留金鑰會用到的字元（iPad 複製貼上偶爾會夾帶看不見的字元或換行）
+					const key = v.replace(/[^A-Za-z0-9_-]/g, "");
 					if (!key) return;
+					const looksOk = /^AIza[A-Za-z0-9_-]{35}$/.test(key);
 					try {
 						if (ss) {
 							ss.setSecret(CLOUD_SECRET_ID, key);
@@ -342,7 +344,11 @@ export class CloudTtsModal extends Modal {
 						} else {
 							this.app.saveLocalStorage(LS_FALLBACK_CLOUD_KEY, key);
 						}
-						keySetting.setDesc("已儲存。按下面的「試聽」確認能用。");
+						keySetting.setDesc(
+							looksOk
+								? "已儲存。按下面的「試聽」確認能用。"
+								: `已儲存，但看起來不像完整的 Google API 金鑰（應該是 AIza 開頭、共 39 個字元；目前 ${key.length} 個字元、開頭 ${key.slice(0, 4)}）。請重新複製整把金鑰再貼一次。`,
+						);
 					} catch (e) {
 						keySetting.setDesc(`儲存失敗：${(e as Error)?.message ?? e}`);
 					}
@@ -363,8 +369,15 @@ export class CloudTtsModal extends Modal {
 				b.setButtonText("試聽").onClick(() => {
 					unlockAudio();
 					p.pronouncer.testCloud("Hi! I'm your English buddy. How was your day?").then(
-						() => new Notice("Google Cloud 語音 OK"),
-						(e) => new Notice(`Google Cloud 語音失敗：${(e as Error)?.message ?? e}`, 10000),
+						() => {
+							new Notice("Google Cloud 語音 OK");
+							p.debug("cloud tts test OK");
+						},
+						(e) => {
+							const msg = (e as Error)?.message ?? String(e);
+							new Notice(`Google Cloud 語音失敗：${msg}${cloudHint(msg)}`, 15000);
+							p.debug(`cloud tts test failed: ${msg}`);
+						},
 					);
 				}),
 			);
@@ -403,4 +416,13 @@ export class CloudTtsModal extends Modal {
 		this.contentEl.empty();
 		this.onDone();
 	}
+}
+
+/** 依 Google 的錯誤訊息給中文提示。 */
+export function cloudHint(msg: string): string {
+	if (/API key not valid|API_KEY_INVALID/i.test(msg)) return "\n→ 金鑰不對：請到 Google Cloud「憑證」重新複製 english-tts 專案的金鑰，整把貼上。";
+	if (/has not been used|is disabled|SERVICE_DISABLED/i.test(msg)) return "\n→ 這個專案還沒開啟 Cloud Text-to-Speech API（或剛開啟，等 2～5 分鐘再試）。也請確認金鑰是 english-tts 專案的，不是 Gemini 那個。";
+	if (/blocked|API_KEY_SERVICE_BLOCKED|not authorized/i.test(msg)) return "\n→ 金鑰的「API 限制」沒有勾 Cloud Text-to-Speech API：到「憑證」編輯金鑰勾上，儲存後等幾分鐘。";
+	if (/billing/i.test(msg)) return "\n→ english-tts 專案還沒連上帳單帳戶。";
+	return "";
 }

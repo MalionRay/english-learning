@@ -41,6 +41,13 @@ class Modal {
 		return this;
 	}
 }
+class PluginSettingTab {
+	constructor(app, plugin) {
+		this.app = app;
+		this.plugin = plugin;
+		this.containerEl = document.createElement("div");
+	}
+}
 class Setting {
 	constructor(el) {
 		this.el = el;
@@ -104,7 +111,7 @@ class Menu {
 }
 let handler = async () => { throw new Error("no network in tests"); };
 module.exports = {
-	TAbstractFile, TFile, TFolder, Component, ItemView, Modal, Setting, Notice, Menu,
+	TAbstractFile, TFile, TFolder, Component, ItemView, Modal, Setting, PluginSettingTab, Notice, Menu,
 	Platform: { isMobile: false, isIosApp: false, isTablet: false, isAndroidApp: false, isWin: true, isMacOS: false, isLinux: false, isDesktopApp: true },
 	normalizePath: (p) => p.replace(/\/+/g, "/").replace(/^\/|\/$/g, ""),
 	requestUrl: async (r) => handler(typeof r === "string" ? { url: r } : r),
