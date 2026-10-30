@@ -50,7 +50,7 @@
 - 每天新題上限（設定 newPerDay，預設 10，每種題型各自計算）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
 - 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
 - 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
-- 一次只練一種題型（開始畫面依題型列出到期／新題數）
+- 一次練一種題型（開始畫面依題型列出到期／新題數）；或按最上面的「今日複習」（v0.18.0，mixSession）：各題型到期的輪流混在一起，到期不夠題數再輪流補新題（各題型仍受每日新題上限）
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
 - 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
 - 「我不知道」→ correct: false、dontKnow: true
@@ -77,6 +77,7 @@
 ## 英文對話與句子本（src/chat.ts、src/chatview.ts）
 - AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
 - 對話角色：成人 Alex（32 歲、Portland、設計師、去過台灣）、小孩 Mia（12 歲、Seattle）；提示要求針對細節回應、分享自己的經驗、不要制式稱讚開頭、口語、每次最多一個問題；temperature 0.9（使用者回饋 3.1-flash-lite 的回答很機械）
+- 對話自適應程度（src/chatlevel.ts，v0.18.0）：每次呼叫依最近 10 則學習者訊息（含這位使用者前 3 次對話）估 1～5 級（小孩最多 4；沒紀錄時成人 3、小孩 2；樣本少時往起點靠、越新越重）。訊息分數：全中文 0.15、被糾正依字的編輯距離（小錯 0.75、重寫 0.1）、夾中文最多 0.5、沒錯 1（1～2 字 0.6）；平均少於 4 字最多 3 級；還沒有 AI 回覆的訊息不算。levelPrompt 加在系統提示：低級短句常用字，高級像朋友聊天；明確要求「自然不等於困難」，不刻意用難字難句。頂端顯示「程度：…」，改變時寫 debug
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53），加上自動推導的「答錯的句子」：克漏字（含我不知道，整句＝填入答案）、翻譯題（reference／prompt；含 grade 判錯）、聽力（沒聽懂）；relearn 不算；移除後又答錯會再出現（failedSentenceMap＋buildPhraseBook）；舊題庫沒有中文時練習當下即時翻譯

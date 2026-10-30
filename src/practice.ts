@@ -161,10 +161,11 @@ interface Prefs {
 
 type Phase = "start" | "busy" | "question" | "done";
 
-type SessionType = QType | "word" | "listening" | "phrase";
-const TYPES: SessionType[] = ["word", "phrase", "vocab", "cloze", "listening", "reading", "translate"];
-const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解", phrase: "句子" };
-const TYPE_HINT: Record<SessionType, string> = {
+type SingleType = QType | "word" | "listening" | "phrase";
+type SessionType = SingleType | "mixed";
+const TYPES: SingleType[] = ["word", "phrase", "vocab", "cloze", "listening", "reading", "translate"];
+const LABEL: Record<SessionType, string> = { ...TYPE_LABEL, word: "生字複習", listening: "聽力理解", phrase: "句子", mixed: "今日複習" };
+const TYPE_HINT: Record<SingleType, string> = {
 	phrase: "對話中被糾正、問過「怎麼說」的句子：看中文說英文",
 	listening: "聽句子，用中文說出意思（AI 批改或自己判斷）",
 	word: "生字本裡的字：看英文回想中文，再翻面確認",
@@ -173,6 +174,48 @@ const TYPE_HINT: Record<SessionType, string> = {
 	reading: "依文章內容回答問題",
 	translate: "中翻英，AI 批改",
 };
+
+/** 一種題型的所有題目。 */
+export function poolFor(t: SingleType, d: PracticeData): PQ[] {
+	if (t === "phrase") return d.phrases.map(phrasePQ);
+	if (t === "word") return d.words.map(wordPQ);
+	if (t === "listening") return d.dicts.map((x) => dictPQ(x, d.banks));
+	return d.pqs.filter((x) => x.q.type === t);
+}
+
+/**
+ * 今日複習：各題型到期的題目輪流排（混在一起），到期的不夠 size 再輪流補新題（各題型仍受每日新題上限）。
+ */
+export function mixSession(groups: { pqs: PQ[]; newAllowed: number }[], states: Map<string, QState>, size: number, now = Date.now()) {
+	const picks = groups.map((g) => {
+		const byId = new Map(g.pqs.map((x) => [x.q.id, x]));
+		const p = pickSession(g.pqs.map((x) => ({ id: x.q.id, marked: x.marked })), states, size, now, g.newAllowed);
+		return { due: p.due.map((x) => byId.get(x.id)!), fresh: p.fresh.map((x) => byId.get(x.id)!), dueTotal: p.dueTotal, freshTotal: p.freshTotal };
+	});
+	const items: PQ[] = [];
+	const seen = new Set<string>();
+	const roundRobin = (lists: PQ[][]) => {
+		for (let i = 0; items.length < size && lists.some((l) => i < l.length); i++)
+			for (const l of lists) {
+				if (items.length >= size) break;
+				const x = l[i];
+				if (x && !seen.has(x.q.id)) {
+					seen.add(x.q.id);
+					items.push(x);
+				}
+			}
+	};
+	roundRobin(picks.map((p) => p.due));
+	const due = items.length;
+	roundRobin(picks.map((p) => p.fresh));
+	return {
+		items,
+		due,
+		fresh: items.length - due,
+		dueTotal: picks.reduce((a, p) => a + p.dueTotal, 0),
+		freshAvailable: picks.reduce((a, p, i) => a + Math.min(p.freshTotal, groups[i].newAllowed), 0),
+	};
+}
 
 /** 比對打字答案：不分大小寫、忽略多餘空白、彎引號、句尾標點。 */
 export function normAnswer(s: string): string {
@@ -321,8 +364,31 @@ export class PracticeView extends ItemView {
 				list.createDiv({ cls: "el-muted", text: "這個題庫還沒有題目。先到主畫面匯入文章並出題。" });
 				return;
 			}
+			// 今日複習：所有題型到期的混在一起
+			const mix = mixSession(
+				TYPES.map((t) => {
+					const qs = poolFor(t, d);
+					return { pqs: qs, newAllowed: this.newAllowed(d.logs, qs) };
+				}),
+				d.states,
+				prefs.size,
+			);
+			const today = list.createDiv({ cls: "el-type-card el-today-card" });
+			const tInfo = today.createDiv({ cls: "el-type-info" });
+			tInfo.createDiv({ cls: "el-title", text: "📅 今日複習" });
+			tInfo.createDiv({ cls: "el-muted", text: "生字、句子、克漏字、聽力…今天到期的全部混在一起出；到期的不夠再補新題。每天按這個就好。" });
+			tInfo.createDiv({
+				text: mix.dueTotal
+					? `到期 ${mix.dueTotal}${mix.dueTotal > prefs.size ? `（這次出 ${prefs.size} 題，剩下的再按一次）` : ""}・今天還可練新題 ${mix.freshAvailable}`
+					: `今天沒有到期的題目・還可練新題 ${mix.freshAvailable}`,
+			});
+			const tb = today.createEl("button", { text: "開始", cls: mix.items.length ? "mod-cta" : "" });
+			tb.disabled = !mix.items.length;
+			tb.onclick = () => this.start("mixed");
+			list.createEl("h4", { text: "或選一種題型" });
+
 			for (const t of TYPES) {
-				const qs = t === "phrase" ? d.phrases.map(phrasePQ) : t === "word" ? d.words.map(wordPQ) : t === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === t);
+				const qs = poolFor(t, d);
 				const allowed = this.newAllowed(d.logs, qs);
 				const pick = pickSession(qs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, 100000);
 				const card = list.createDiv({ cls: "el-type-card" });
@@ -373,10 +439,25 @@ export class PracticeView extends ItemView {
 		this.gradePendingInBackground(d.logs);
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
-		const pqs = type === "phrase" ? d.phrases.map(phrasePQ) : type === "word" ? d.words.map(wordPQ) : type === "listening" ? d.dicts.map((x) => dictPQ(x, d.banks)) : d.pqs.filter((x) => x.q.type === type);
-		const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size, Date.now(), this.newAllowed(d.logs, pqs));
-		const byId = new Map(pqs.map((x) => [x.q.id, x]));
-		this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
+		let counts: { due: number; fresh: number };
+		if (type === "mixed") {
+			const mix = mixSession(
+				TYPES.map((t) => {
+					const qs = poolFor(t, d);
+					return { pqs: qs, newAllowed: this.newAllowed(d.logs, qs) };
+				}),
+				d.states,
+				prefs.size,
+			);
+			this.items = mix.items;
+			counts = { due: mix.due, fresh: mix.fresh };
+		} else {
+			const pqs = poolFor(type, d);
+			const pick = pickSession(pqs.map((x) => ({ id: x.q.id, marked: x.marked })), d.states, prefs.size, Date.now(), this.newAllowed(d.logs, pqs));
+			const byId = new Map(pqs.map((x) => [x.q.id, x]));
+			this.items = [...pick.due, ...pick.fresh].map((x) => byId.get(x.id)!).filter(Boolean);
+			counts = { due: pick.due.length, fresh: pick.fresh.length };
+		}
 		if (!this.items.length) {
 			this.phase = "start";
 			this.drawStart();
@@ -389,7 +470,7 @@ export class PracticeView extends ItemView {
 		this.results = [];
 		this.requeued.clear();
 		this.phase = "question";
-		p.debug(`practice start user=${p.user} type=${type} items=${this.items.length} (due ${pick.due.length}, new ${pick.fresh.length})`);
+		p.debug(`practice start user=${p.user} type=${type} items=${this.items.length} (due ${counts.due}, new ${counts.fresh})`);
 		this.drawQuestion();
 	}
 
@@ -1179,7 +1260,7 @@ export class PracticeView extends ItemView {
 					end.disabled = false;
 				}
 			};
-			const again = r.createEl("button", { text: "換一種題型" });
+			const again = r.createEl("button", { text: this.sessionType === "mixed" ? "回到開始畫面" : "換一種題型" });
 			again.onclick = () => {
 				this.phase = "start";
 				this.drawStart();
