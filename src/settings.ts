@@ -300,17 +300,22 @@ export class CloudTtsModal extends Modal {
 	onOpen() {
 		const p = this.plugin;
 		const el = this.contentEl;
+		// 麵包屑（iPad 打開這個視窗會當掉，找是哪一步）
+		const mark = (step: string) => this.app.saveLocalStorage(LS_SETTINGS_STEP, `cloud-modal:${step}`);
+		mark("start");
 		this.setTitle("Google Cloud 語音（Chirp 3 HD）");
 		el.createEl("p", {
 			cls: "setting-item-description",
 			text: "每月前 100 萬字免費（Google 要求綁付費帳戶）。請用「另一個」Google Cloud 專案的金鑰：Gemini 用的那個專案一開付費，Gemini 就不再免費。順序：已存錄音 → 字典真人錄音 → Google Cloud 語音 → Gemini 語音 → 系統語音。",
 		});
+		mark("toggle");
 		new Setting(el).setName("使用 Google Cloud 語音").addToggle((t) =>
 			t.setValue(p.settings.cloudTts).onChange(async (v) => {
 				p.settings.cloudTts = v;
 				await p.saveSettings();
 			}),
 		);
+		mark("key");
 		const ss = (this.app as App & { secretStorage?: obsidian.SecretStorage }).secretStorage;
 		const keySetting = new Setting(el)
 			.setName("API key")
@@ -320,8 +325,12 @@ export class CloudTtsModal extends Modal {
 					: "貼上金鑰。存在這台裝置的 Obsidian 安全儲存區，不進 Vault、不同步；每台裝置各貼一次。",
 			)
 			.addText((t) => {
-				t.inputEl.type = "password";
-				t.setPlaceholder(p.getCloudKey() ? "••••••••（已設定）" : "AIza…");
+				// 不用 type=password（iPad 的密碼自動填入可能出問題）；關掉自動完成、大寫、拼字
+				t.inputEl.setAttribute("autocomplete", "off");
+				t.inputEl.setAttribute("autocapitalize", "off");
+				t.inputEl.setAttribute("autocorrect", "off");
+				t.inputEl.spellcheck = false;
+				t.setPlaceholder(p.getCloudKey() ? "（已設定，要換才貼）" : "AIza…");
 				t.onChange(async (v) => {
 					const key = v.trim();
 					if (!key) return;
@@ -339,6 +348,7 @@ export class CloudTtsModal extends Modal {
 					}
 				});
 			});
+		mark("voice");
 		new Setting(el)
 			.setName("聲音")
 			.setDesc("按「試聽」會用 Google Cloud 唸一句（約 50 字，算進每月字數）。")
@@ -358,6 +368,7 @@ export class CloudTtsModal extends Modal {
 					);
 				}),
 			);
+		mark("cap");
 		const usage = new Setting(el)
 			.setName("每月上限（字）")
 			.setDesc("所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。")
@@ -370,11 +381,22 @@ export class CloudTtsModal extends Modal {
 					}
 				}),
 			);
-		p.pronouncer.cloudUsage.used().then(
-			(n) => usage.setDesc(`所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。這個月已用 ${n.toLocaleString()} 字（${cloudMonth()}）。`),
-			() => undefined,
+		// 本月用量要讀所有 log，改成按了才算
+		usage.addButton((b) =>
+			b.setButtonText("查看本月用量").onClick(() => {
+				mark("usage");
+				p.pronouncer.cloudUsage.used().then(
+					(n) => {
+						usage.setDesc(`所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。這個月已用 ${n.toLocaleString()} 字（${cloudMonth()}）。`);
+						mark("usage-done");
+					},
+					(e) => usage.setDesc(`讀取用量失敗：${(e as Error)?.message ?? e}`),
+				);
+			}),
 		);
 		new Setting(el).addButton((b) => b.setButtonText("完成").setCta().onClick(() => this.close()));
+		mark("rendered");
+		window.setTimeout(() => mark("done"), 3000);
 	}
 
 	onClose() {

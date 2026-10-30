@@ -72,7 +72,11 @@ export default class EnglishLearningPlugin extends Plugin {
 		// 上次設定頁沒畫完就當掉：記到除錯紀錄
 		const step = this.app.loadLocalStorage(LS_SETTINGS_STEP);
 		if (typeof step === "string" && step !== "done") {
-			this.app.workspace.onLayoutReady(() => this.debug(`settings page did not finish last time (last step: ${step})`));
+			this.app.workspace.onLayoutReady(() => {
+				this.debug(`settings page did not finish last time (last step: ${step})`);
+				// 盡快同步，讓其他裝置（電腦）看得到這筆除錯紀錄
+				window.setTimeout(() => this.triggerSync(), 5000);
+			});
 		}
 		this.app.saveLocalStorage(LS_SETTINGS_STEP, null);
 		this.registerEvent(this.app.vault.on("create", (f) => this.pronouncer.onCreate(f)));
