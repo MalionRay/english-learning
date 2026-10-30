@@ -69,5 +69,9 @@
 - [ ] 設定頁試聽、對話自動朗讀用 Chirp 3 HD、每月用量顯示
 - [ ] 練習時點 🔊 與聽力題也用 Google Cloud 語音並存成錄音
 
+### v0.17.1
+- [ ] iPad 打開「設定 → English Learning」不再當掉（v0.17.0 會當掉）；若還會，看除錯紀錄的「settings page did not finish」
+- [ ] Google Cloud 語音「設定…」對話框：貼金鑰、試聽、每月用量
+
 ### 延後
 - [ ] iPhone 安裝（BRAT）與三台裝置同步測試

@@ -1,7 +1,7 @@
 import * as obsidian from "obsidian";
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
-import { DEFAULTS, LS_FALLBACK_CLOUD_KEY, LS_FALLBACK_KEY } from "./constants";
+import { DEFAULTS, LS_FALLBACK_CLOUD_KEY, LS_FALLBACK_KEY, LS_SETTINGS_STEP } from "./constants";
 import { safeName } from "./logs";
 import { LS_TTS_RATE, getRate, voicePicker } from "./tts";
 import { CHIRP_VOICES, CLOUD_FREE_CHARS, cloudMonth } from "./cloudtts";
@@ -20,6 +20,9 @@ export class ELSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		const p = this.plugin;
 		containerEl.empty();
+		// 麵包屑：localStorage 是同步寫入，Obsidian 當掉也留得住；下次啟動時寫進除錯紀錄，看是哪一段當掉
+		const mark = (step: string) => this.app.saveLocalStorage(LS_SETTINGS_STEP, step);
+		mark("start");
 
 		new Setting(containerEl)
 			.setName("本機裝置 ID")
@@ -80,6 +83,7 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		mark("backup");
 		containerEl.createEl("h3", { text: "備份" });
 		const lastBackup = this.app.loadLocalStorage(LS_LAST_BACKUP);
 		new Setting(containerEl)
@@ -123,6 +127,7 @@ export class ELSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		mark("audio");
 		containerEl.createEl("h3", { text: "錄音" });
 		const u = audioUsage(this.app, p.deviceId);
 		new Setting(containerEl)
@@ -166,6 +171,7 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		mark("pronounce");
 		containerEl.createEl("h3", { text: "發音" });
 		containerEl.createEl("p", {
 			cls: "setting-item-description",
@@ -218,7 +224,9 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		mark("cloud");
 		this.cloudSection(containerEl);
+		mark("voices");
 
 		const voiceSetting = new Setting(containerEl)
 			.setName("系統語音")
@@ -235,6 +243,7 @@ export class ELSettingTab extends PluginSettingTab {
 					.onChange((v) => this.app.saveLocalStorage(LS_TTS_RATE, v)),
 			);
 
+		mark("apikey");
 		const SecretComponentCtor = (obsidian as unknown as { SecretComponent?: typeof obsidian.SecretComponent }).SecretComponent;
 		const hasSecretStorage = !!(this.app as App & { secretStorage?: unknown }).secretStorage;
 
@@ -260,46 +269,79 @@ export class ELSettingTab extends PluginSettingTab {
 					);
 				});
 		}
+		// 系統語音清單是非同步載入的：等它出來後才算畫完
+		window.setTimeout(() => mark("done"), 3000);
 	}
 
-	/** Google Cloud 語音（Chirp 3 HD）設定。 */
+	/** Google Cloud 語音（Chirp 3 HD）：設定頁只放一列摘要，細項在對話框裡（v0.17.0 在 iPad 打開設定頁會當掉，疑似同頁兩個 SecretComponent）。 */
 	private cloudSection(containerEl: HTMLElement) {
 		const p = this.plugin;
-		containerEl.createEl("h3", { text: "Google Cloud 語音（Chirp 3 HD）" });
-		containerEl.createEl("p", {
-			cls: "setting-item-description",
-			text: "很自然的聲音，每月前 100 萬字免費（Google 要求綁付費帳戶）。請用「另一個」Google Cloud 專案的金鑰：Gemini 用的那個專案一開付費，Gemini 就不再免費。開啟後的順序：已存錄音 → 字典真人錄音 → Google Cloud 語音 → Gemini 語音 → 系統語音。",
-		});
+		const hasKey = !!p.getCloudKey();
 		new Setting(containerEl)
-			.setName("使用 Google Cloud 語音")
-			.addToggle((t) =>
-				t.setValue(p.settings.cloudTts).onChange(async (v) => {
-					p.settings.cloudTts = v;
-					await p.saveSettings();
-				}),
+			.setName("Google Cloud 語音（Chirp 3 HD）")
+			.setDesc(`很自然的聲音，每月前 100 萬字免費。目前：${p.settings.cloudTts ? "已開啟" : "未開啟"}、金鑰${hasKey ? "已設定" : "未設定"}、聲音 ${p.settings.cloudVoice || "Kore"}。`)
+			.addButton((b) =>
+				b
+					.setButtonText("設定…")
+					.setCta()
+					.onClick(() => new CloudTtsModal(this.app, p, () => this.display()).open()),
 			);
-		const SecretComponentCtor = (obsidian as unknown as { SecretComponent?: typeof obsidian.SecretComponent }).SecretComponent;
-		const hasSecretStorage = !!(this.app as App & { secretStorage?: unknown }).secretStorage;
-		if (SecretComponentCtor && hasSecretStorage) {
-			new Setting(containerEl)
-				.setName("Google Cloud 語音的 API key")
-				.setDesc("存在 Obsidian 的 SecretStorage（本機、不進 Vault）。每台裝置各設定一次。")
-				.addComponent((el) =>
-					new SecretComponentCtor(this.app, el).setValue(p.settings.cloudKeySecretName).onChange(async (v) => {
-						p.settings.cloudKeySecretName = v ?? "";
-						await p.saveSettings();
-					}),
-				);
-		} else {
-			new Setting(containerEl).setName("Google Cloud 語音的 API key（備案：localStorage）").addText((t) => {
+	}
+}
+
+/** Google Cloud 語音的設定對話框。金鑰直接寫進 app.secretStorage（不用 SecretComponent）。 */
+export const CLOUD_SECRET_ID = "english-learning-cloud-tts";
+
+export class CloudTtsModal extends Modal {
+	constructor(app: App, private plugin: EnglishLearningPlugin, private onDone: () => void) {
+		super(app);
+	}
+
+	onOpen() {
+		const p = this.plugin;
+		const el = this.contentEl;
+		this.setTitle("Google Cloud 語音（Chirp 3 HD）");
+		el.createEl("p", {
+			cls: "setting-item-description",
+			text: "每月前 100 萬字免費（Google 要求綁付費帳戶）。請用「另一個」Google Cloud 專案的金鑰：Gemini 用的那個專案一開付費，Gemini 就不再免費。順序：已存錄音 → 字典真人錄音 → Google Cloud 語音 → Gemini 語音 → 系統語音。",
+		});
+		new Setting(el).setName("使用 Google Cloud 語音").addToggle((t) =>
+			t.setValue(p.settings.cloudTts).onChange(async (v) => {
+				p.settings.cloudTts = v;
+				await p.saveSettings();
+			}),
+		);
+		const ss = (this.app as App & { secretStorage?: obsidian.SecretStorage }).secretStorage;
+		const keySetting = new Setting(el)
+			.setName("API key")
+			.setDesc(
+				p.getCloudKey()
+					? "已設定（存在這台裝置的 Obsidian 安全儲存區，不進 Vault、不同步）。要換就貼上新的。"
+					: "貼上金鑰。存在這台裝置的 Obsidian 安全儲存區，不進 Vault、不同步；每台裝置各貼一次。",
+			)
+			.addText((t) => {
 				t.inputEl.type = "password";
-				const cur = this.app.loadLocalStorage(LS_FALLBACK_CLOUD_KEY);
-				t.setValue(typeof cur === "string" ? cur : "").onChange((v) => this.app.saveLocalStorage(LS_FALLBACK_CLOUD_KEY, v.trim() || null));
+				t.setPlaceholder(p.getCloudKey() ? "••••••••（已設定）" : "AIza…");
+				t.onChange(async (v) => {
+					const key = v.trim();
+					if (!key) return;
+					try {
+						if (ss) {
+							ss.setSecret(CLOUD_SECRET_ID, key);
+							p.settings.cloudKeySecretName = CLOUD_SECRET_ID;
+							await p.saveSettings();
+						} else {
+							this.app.saveLocalStorage(LS_FALLBACK_CLOUD_KEY, key);
+						}
+						keySetting.setDesc("已儲存。按下面的「試聽」確認能用。");
+					} catch (e) {
+						keySetting.setDesc(`儲存失敗：${(e as Error)?.message ?? e}`);
+					}
+				});
 			});
-		}
-		new Setting(containerEl)
+		new Setting(el)
 			.setName("聲音")
-			.setDesc("按「試聽」會用 Google Cloud 唸一句（算進每月字數，約 50 字）。")
+			.setDesc("按「試聽」會用 Google Cloud 唸一句（約 50 字，算進每月字數）。")
 			.addDropdown((d) => {
 				for (const v of CHIRP_VOICES) d.addOption(v.name, v.label);
 				d.setValue(p.settings.cloudVoice || "Kore").onChange(async (v) => {
@@ -316,7 +358,7 @@ export class ELSettingTab extends PluginSettingTab {
 					);
 				}),
 			);
-		const usage = new Setting(containerEl)
+		const usage = new Setting(el)
 			.setName("每月上限（字）")
 			.setDesc("所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。")
 			.addText((t) =>
@@ -329,8 +371,14 @@ export class ELSettingTab extends PluginSettingTab {
 				}),
 			);
 		p.pronouncer.cloudUsage.used().then(
-			(n) => usage.setDesc(`所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。這個月已用 ${n.toLocaleString()} 字（${cloudMonth()}，依已同步到這台的紀錄）。`),
+			(n) => usage.setDesc(`所有裝置合計，到了就改用其他語音，下個月恢復。免費額度是 1,000,000 字。這個月已用 ${n.toLocaleString()} 字（${cloudMonth()}）。`),
 			() => undefined,
 		);
+		new Setting(el).addButton((b) => b.setButtonText("完成").setCta().onClick(() => this.close()));
+	}
+
+	onClose() {
+		this.contentEl.empty();
+		this.onDone();
 	}
 }

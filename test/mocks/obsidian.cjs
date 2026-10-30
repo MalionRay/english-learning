@@ -44,9 +44,28 @@ class Modal {
 class Setting {
 	constructor(el) {
 		this.el = el;
+		this.controlEl = document.createElement("div");
+		el.appendChild(this.controlEl);
+		this.desc = "";
 	}
-	setName() { return this; }
-	setDesc() { return this; }
+	setName(n) { this.name = n; return this; }
+	setDesc(d) { this.desc = d; return this; }
+	addToggle(cb) {
+		const i = document.createElement("input");
+		i.type = "checkbox";
+		this.el.appendChild(i);
+		const t = { setValue: (v) => { i.checked = v; return t; }, onChange: (f) => { i.onchange = () => f(i.checked); return t; } };
+		cb(t);
+		return this;
+	}
+	addButton(cb) {
+		const b = document.createElement("button");
+		this.el.appendChild(b);
+		const o = { buttonEl: b, setButtonText: (x) => { b.textContent = x; return o; }, setCta: () => o, setDisabled: (d) => { b.disabled = d; return o; }, onClick: (f) => { b.onclick = f; return o; } };
+		cb(o);
+		return this;
+	}
+	addComponent(cb) { cb(this.controlEl); return this; }
 	addDropdown(cb) {
 		const s = document.createElement("select");
 		this.el.appendChild(s);

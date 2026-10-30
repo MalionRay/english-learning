@@ -7,6 +7,7 @@ import {
 	LS_DEVICE_ID,
 	LS_FALLBACK_KEY,
 	LS_FALLBACK_CLOUD_KEY,
+	LS_SETTINGS_STEP,
 	LS_USER,
 	REMOTELY_SAVE_SYNC,
 	Settings,
@@ -68,6 +69,12 @@ export default class EnglishLearningPlugin extends Plugin {
 			notice: (m) => new Notice(m, 8000),
 			debug: (m) => this.debug(m),
 		});
+		// 上次設定頁沒畫完就當掉：記到除錯紀錄
+		const step = this.app.loadLocalStorage(LS_SETTINGS_STEP);
+		if (typeof step === "string" && step !== "done") {
+			this.app.workspace.onLayoutReady(() => this.debug(`settings page did not finish last time (last step: ${step})`));
+		}
+		this.app.saveLocalStorage(LS_SETTINGS_STEP, null);
 		this.registerEvent(this.app.vault.on("create", (f) => this.pronouncer.onCreate(f)));
 		this.registerEvent(this.app.vault.on("delete", (f) => this.pronouncer.onDelete(f)));
 		this.registerEvent(
