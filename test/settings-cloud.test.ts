@@ -1,7 +1,7 @@
 import "./helpers/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLOUD_SECRET_ID, CloudTtsModal } from "../src/settings";
+import { CLOUD_SECRET_ID, CloudTtsModal, cloudHint } from "../src/settings";
 import { makeApp } from "./helpers/app";
 
 test("Google Cloud 語音設定：金鑰直接存進 secretStorage、不用 SecretComponent", async () => {
@@ -33,4 +33,11 @@ test("Google Cloud 語音設定：金鑰直接存進 secretStorage、不用 Secr
 	m.close();
 	assert.equal(done, 1);
 	assert.ok(saved >= 2);
+});
+
+test("Google Cloud 錯誤訊息的中文提示", () => {
+	assert.match(cloudHint("HTTP 400：API key not valid. Please pass a valid API key."), /金鑰不對/);
+	assert.match(cloudHint("HTTP 403：Cloud Text-to-Speech API has not been used in project 123 before or it is disabled."), /還沒開啟/);
+	assert.match(cloudHint("HTTP 403：Requests to this API texttospeech.googleapis.com method ... are blocked."), /API 限制/);
+	assert.equal(cloudHint("HTTP 500"), "");
 });
