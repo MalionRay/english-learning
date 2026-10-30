@@ -3,7 +3,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { TYPE_LABEL } from "./generate";
 import { loadPractice } from "./practice";
-import { computeStats, wordQid } from "./words";
+import { BOOK_STATUS_LABEL, BookStatus, bookStatus, computeStats, splitByStatus, wordQid } from "./words";
 import { PHRASE_SOURCE_LABEL, phraseQid } from "./chat";
 import type { AnswerLog, GradeLog } from "./srs";
 import { PatternModal } from "./patternview";
@@ -27,6 +27,23 @@ function header(el: HTMLElement, title: string, plugin: EnglishLearningPlugin, o
 
 function levelFor(user: string): "adult" | "kid" {
 	return user === "kid" ? "kid" : "adult";
+}
+
+/** 卡片上的狀態標籤。 */
+function statusChip(parent: HTMLElement, s: BookStatus) {
+	parent.createSpan({ cls: `el-status is-${s}`, text: BOOK_STATUS_LABEL[s] });
+}
+
+/** 還在學的直接列出；熟練的收在「已熟練」裡（搜尋時自動展開）。 */
+function drawSplit<T>(list: HTMLElement, items: T[], statusOf: (x: T) => BookStatus, filtering: boolean, drawCard: (parent: HTMLElement, x: T, s: BookStatus) => void) {
+	const { active, mastered, counts } = splitByStatus(items, statusOf);
+	list.createDiv({ cls: "el-muted el-book-summary", text: `要加強 ${counts.wrong}・學習中 ${counts.learning}・還沒複習 ${counts.new}・熟練 ${counts.mastered}` });
+	for (const x of active) drawCard(list, x, statusOf(x));
+	if (!mastered.length) return;
+	const det = list.createEl("details", { cls: "el-mastered" });
+	det.createEl("summary", { text: `✓ 已熟練 ${mastered.length}（間隔 7 天以上，偶爾才會出現；點開查看）` });
+	if (filtering) det.open = true;
+	for (const x of mastered) drawCard(det, x, "mastered");
 }
 
 function relDay(ms: number): string {
@@ -89,10 +106,11 @@ export class WordsView extends ItemView {
 			const f = this.filter.trim().toLowerCase();
 			const shown = words.filter((w) => !f || w.key.includes(f) || [...w.forms].some((x) => x.toLowerCase().includes(f)) || (w.meaning ?? "").includes(f));
 			if (!shown.length) list.createDiv({ cls: "el-muted", text: words.length ? "沒有符合的字" : "還沒有生字。練習時點句子裡的字可以加入。" });
-			for (const w of shown) {
+			drawSplit(list, shown, (w) => bookStatus(d.states.get(wordQid(w.key))), !!f, (parent, w, status) => {
 				const st = d.states.get(wordQid(w.key));
-				const card = list.createDiv({ cls: "el-card el-word-card" });
+				const card = parent.createDiv({ cls: `el-card el-word-card is-${status}` });
 				const top = card.createDiv({ cls: "el-row" });
+				statusChip(top, status);
 				top.createSpan({ cls: "el-say el-title", text: w.word });
 				if (w.ipa) top.createSpan({ cls: "el-ipa", text: w.ipa });
 				top.createSpan({ text: w.meaning ?? "" });
@@ -102,7 +120,7 @@ export class WordsView extends ItemView {
 				if (w.reasons.has("marked")) tags.push("⭐標記");
 				if (w.wrong) tags.push(`答錯 ${w.wrong} 次`);
 				if (w.reasons.has("manual")) tags.push("自己加入");
-				tags.push(st ? `下次複習：${relDay(st.due)}` : "還沒複習過");
+				if (st) tags.push(`下次複習：${relDay(st.due)}`);
 				const bottom = card.createDiv({ cls: "el-row" });
 				bottom.createSpan({ cls: "el-muted", text: tags.join("・") });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
@@ -110,7 +128,7 @@ export class WordsView extends ItemView {
 					await p.appendLog(p.makeEntry("word-remove", { word: w.word }));
 					card.remove();
 				};
-			}
+			});
 		};
 		search.addEventListener("input", () => {
 			this.filter = search.value;
@@ -261,22 +279,24 @@ export class PhrasesView extends ItemView {
 			const f = this.filter.trim().toLowerCase();
 			const shown = items.filter((x) => !f || x.en.toLowerCase().includes(f) || x.zh.includes(f));
 			if (!shown.length) list.createDiv({ cls: "el-muted", text: items.length ? "沒有符合的句子" : "還沒有句子。到「英文對話」聊聊看吧。" });
-			for (const x of shown) {
+			drawSplit(list, shown, (x) => bookStatus(d.states.get(phraseQid(x.key))), !!f, (parent, x, status) => {
 				const st = d.states.get(phraseQid(x.key));
-				const card = list.createDiv({ cls: "el-card el-word-card" });
-				card.createDiv({ cls: "el-title", text: x.zh || "（中文會在練習時翻譯）" });
+				const card = parent.createDiv({ cls: `el-card el-word-card is-${status}` });
+				const head = card.createDiv({ cls: "el-row" });
+				statusChip(head, status);
+				head.createSpan({ cls: "el-title", text: x.zh || "（中文會在練習時翻譯）" });
 				card.createDiv({ cls: "el-say el-sentence", text: x.en });
 				if (x.alt) card.createDiv({ cls: "el-say el-sentence el-muted", text: x.alt });
 				if (x.source === "correction" && x.original) card.createDiv({ cls: "el-d-typed", text: x.original });
 				if (x.note) card.createDiv({ cls: "el-muted", text: x.note });
 				const bottom = card.createDiv({ cls: "el-row" });
-				bottom.createSpan({ cls: "el-muted", text: `${PHRASE_SOURCE_LABEL[x.source] ?? "問過怎麼說"}・${st ? `下次複習：${relDay(st.due)}` : "還沒複習過"}` });
+				bottom.createSpan({ cls: "el-muted", text: `${PHRASE_SOURCE_LABEL[x.source] ?? "問過怎麼說"}${st ? `・下次複習：${relDay(st.due)}` : ""}` });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
 				rm.onclick = async () => {
 					await p.appendLog(p.makeEntry("phrase-remove", { key: x.key }));
 					card.remove();
 				};
-			}
+			});
 		};
 		search.addEventListener("input", () => {
 			this.filter = search.value;
