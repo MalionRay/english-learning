@@ -15,7 +15,7 @@ import {
 } from "./constants";
 import { Level } from "./generate";
 import { AppendOnlyWriter, DEBUG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, uuid } from "./logs";
-import { ELSettingTab } from "./settings";
+import { CloudTtsModal, ELSettingTab } from "./settings";
 import { bankPath, generateForSource, importArticle, resetSource, waitForStatus } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
 import { englishVoices, speak, ttsAvailable } from "./tts";
@@ -123,6 +123,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
 		this.addCommand({ id: "patterns", name: "分析常見錯誤", callback: () => new PatternModal(this.app, this).open() });
 		this.addCommand({ id: "speed-test", name: "AI 速度測試", callback: () => new SpeedTestModal(this.app, this).open() });
+		this.addCommand({ id: "cloud-tts", name: "設定 Google Cloud 語音", callback: () => new CloudTtsModal(this.app, this, () => undefined).open() });
 		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
 		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
