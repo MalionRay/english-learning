@@ -118,5 +118,5 @@
   `<vault>/.obsidian/plugins/english-learning/`（該資料夾有 .hotreload，Hot Reload 會自動重新載入）
 - 發布（給 iPad/iPhone 的 BRAT）：同時改 manifest.json 與 versions.json 的版本號，推到 main；
   GitHub Action 會編譯、跑 check 與測試，並在該版本沒有 release 時自動發布 main.js、manifest.json、styles.css
-- 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools）；設定頁每畫一段就把段落名稱寫進 localStorage（english-learning:settings-step，同步寫入、當掉也留得住），下次啟動時沒畫完就記進 debug
+- 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools）；設定頁每畫一段就把段落名稱寫進 localStorage（english-learning:settings-step，同步寫入、當掉也留得住），下次啟動時沒畫完就記進 debug 並同步；CloudTtsModal 也記（cloud-modal:<步驟>），本月用量改成按鈕才讀；v0.17.2 在 iPad 打開這個視窗仍會當掉，原因追查中
 - 觸發 Remotely Save 用 app.commands.executeCommandById('remotely-save:start-sync')，是非正式內部 API，失效時退回手動同步

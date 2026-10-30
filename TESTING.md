@@ -73,5 +73,8 @@
 - [ ] iPad 打開「設定 → English Learning」不再當掉（v0.17.0 會當掉）；若還會，看除錯紀錄的「settings page did not finish」
 - [ ] Google Cloud 語音「設定…」對話框：貼金鑰、試聽、每月用量
 
+### v0.17.3
+- [ ] 「設定 Google Cloud 語音」視窗在 iPad 不再當掉（v0.17.2 跳出後當掉）；若還會，看除錯紀錄 cloud-modal:<步驟>
+
 ### 延後
 - [ ] iPhone 安裝（BRAT）與三台裝置同步測試

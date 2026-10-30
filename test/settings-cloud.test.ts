@@ -21,7 +21,7 @@ test("Google Cloud 語音設定：金鑰直接存進 secretStorage、不用 Secr
 	const toggle = m.contentEl.querySelector("input[type=checkbox]");
 	toggle.checked = true;
 	toggle.onchange();
-	const key = m.contentEl.querySelector("input[type=password]");
+	const key = [...m.contentEl.querySelectorAll("input")].find((x: any) => x.getAttribute("autocomplete") === "off") as any;
 	key.value = "  AIza-test-key ";
 	await key.oninput();
 	assert.equal(secrets.get(CLOUD_SECRET_ID), "AIza-test-key");
