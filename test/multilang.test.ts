@@ -165,6 +165,22 @@ test("系統語音：西班牙文挑墨西哥／美國，日文挑日本", () =>
 	assert.equal(defaultVoice(voices.filter((x) => x.lang.startsWith("ja")), "ja")?.name, "Kyoko");
 });
 
+test("檢查修正：日文讀音分批查（避免回覆被截斷），快取不會互相蓋掉", async () => {
+	const { readingBatches, READING_BATCH } = await import("../src/translate");
+	const items = Array.from({ length: 20 }, (_, i) => ({ t: "今日はいい天気です。".repeat(i === 3 ? 70 : 1) }));
+	const batches = readingBatches(items);
+	assert.ok(batches.every((b) => b.length <= READING_BATCH.items));
+	assert.equal(batches.flat().length, 20);
+	const { app } = makeApp();
+	let calls = 0;
+	const ai: any = { complete: async (p: string) => (calls++, { text: JSON.stringify({ items: p.split("\n").map((l) => ({ kana: "か", romaji: l.slice(0, 3) })) }) }) };
+	const texts = Array.from({ length: 12 }, (_, i) => `文${i}です。`);
+	const r = await readingMany(app, ai, texts);
+	assert.equal(calls, 2); // 8 + 4
+	assert.ok(r.every((x) => x.kana === "か"));
+	assert.ok(texts.every((t) => cachedReading(app, t)));
+});
+
 test("翻譯快取各語言分開；日文讀音一次查多句並快取", async () => {
 	const { app } = makeApp();
 	let calls = 0;
@@ -185,4 +201,28 @@ test("翻譯快取各語言分開；日文讀音一次查多句並快取", async
 	await readingMany(app, ai, ["今日はいい天気です。"]);
 	assert.equal(calls, before); // 快取命中不再呼叫
 	assert.equal(normWord("「天気」", "ja"), "天気");
+});
+
+test("檢查修正：合併變化形時，生字本顯示的字不會帶語言前綴", () => {
+	const logs = [{ id: "w1", ts: "2026-01-07T00:00:00Z", type: "word-add", word: "fui", lemma: "ir", lang: "es" }] as any;
+	const book = buildWordBook([spanishBank()], logs, "es");
+	const ir = book.find((w) => w.key === "es:ir")!;
+	assert.equal(ir.word, "ir");
+	assert.ok(ir.forms.has("fui"));
+});
+
+test("檢查修正：西班牙文、日文的移除紀錄帶 lang 才會生效", () => {
+	const add = { id: "a", ts: "2026-01-07T00:00:00Z", type: "word-add", word: "casa", lang: "es" };
+	const removeEn = { id: "r1", ts: "2026-01-08T00:00:00Z", type: "word-remove", word: "casa" };
+	const removeEs = { id: "r2", ts: "2026-01-08T00:00:00Z", type: "word-remove", word: "casa", lang: "es" };
+	assert.ok(buildWordBook([], [add, removeEn] as any, "es").some((w) => w.key === "es:casa")); // 沒帶 lang＝英文的移除
+	assert.ok(!buildWordBook([], [add, removeEs] as any, "es").some((w) => w.key === "es:casa"));
+	const p = { id: "p", ts: "2026-01-07T00:00:00Z", type: "phrase-add", key: "k1", zh: "早安", en: "おはよう", lang: "ja" };
+	assert.equal(buildPhraseBook([p, { id: "x", ts: "2026-01-08T00:00:00Z", type: "phrase-remove", key: "k1", lang: "ja" }] as any, new Map(), "ja").length, 0);
+});
+
+test("檢查修正：日文標記生字不會標到已經標記的字裡面", () => {
+	const r = markWords("==天気予報==を見ました。明日の天気は晴れです。", ["天気"], "ja");
+	assert.equal(r.text, "==天気予報==を見ました。明日の==天気==は晴れです。");
+	assert.deepEqual(markWords("==天気予報==を見ました。", ["天気"], "ja"), { text: "==天気予報==を見ました。", notFound: [] });
 });

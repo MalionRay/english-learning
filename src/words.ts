@@ -90,6 +90,9 @@ export function buildWordBookWithAliases(allBanks: Bank[], allLogs: (AnswerLog |
 	const banks = allBanks.filter((b) => langOf(b.lang) === lang);
 	const logs = allLogs.filter((e) => (e.type !== "word-add" && e.type !== "word-remove") || langOf((e as WordLog).lang) === lang);
 	const wordKey = (w: string) => wordKeyOf(w, lang);
+	// 顯示用：key 去掉語言前綴（es:ir → ir）
+	const tag = langTag(lang);
+	const shown = (key: string) => (tag && key.startsWith(tag) ? key.slice(tag.length) : key);
 	const items = new Map<string, WordItem>();
 	const qmap = new Map<string, { q: Question; bank: Bank }>();
 	for (const b of banks) for (const q of b.questions) qmap.set(q.id, { q, bank: b });
@@ -139,9 +142,9 @@ export function buildWordBookWithAliases(allBanks: Bank[], allLogs: (AnswerLog |
 		const isBase = raw === key;
 		let it = items.get(key);
 		if (!it) {
-			it = { key, word: isBase ? word.trim() : key, banks: new Set(), reasons: new Set(), wrong: 0, addedAt: ts, forms: new Set() };
+			it = { key, word: isBase ? word.trim() : shown(key), banks: new Set(), reasons: new Set(), wrong: 0, addedAt: ts, forms: new Set() };
 			items.set(key, it);
-		} else if (isBase && it.word === key) {
+		} else if (isBase && it.word === shown(key)) {
 			it.word = word.trim(); // 保留原形原本的大小寫
 		}
 		if (!isBase) it.forms.add(word.trim());

@@ -80,10 +80,10 @@ export async function synthCloud(apiKey: string, text: string, voice: string, lo
 }
 
 /** 這個月所有裝置用了多少字：從 logs/**.jsonl 的 tts 紀錄（source "cloud"）加總，UUID 去重。 */
-export async function readCloudUsage(app: App, month = cloudMonth()): Promise<number> {
+export async function readCloudUsage(app: App, month = cloudMonth(), root = LOG_ROOT): Promise<number> {
 	const seen = new Set<string>();
 	let total = 0;
-	for (const path of await listRecursive(app, LOG_ROOT)) {
+	for (const path of await listRecursive(app, root)) {
 		if (!path.endsWith(".jsonl")) continue;
 		let text = "";
 		try {

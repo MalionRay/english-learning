@@ -191,7 +191,7 @@ function typeHint(t: SingleType, lang: Lang): string {
 		vocab: `看${L}選中文（或反過來）`,
 		cloze: lang === "ja" ? "句子挖空，自己打出那個字（漢字、假名或羅馬拼音都可以）" : "句子挖空，自己打出那個字",
 		reading: "依文章內容回答問題",
-		translate: `中翻${L.replace("文", "")}，AI 批改`,
+		translate: `中翻${{ en: "英", es: "西", ja: "日" }[lang]}，AI 批改`,
 	};
 	return hints[t];
 }
@@ -266,7 +266,9 @@ export function letterHint(answer: string): string {
 export function kanaHint(reading: string, romaji?: string): string {
 	const kana = [...toHiragana(reading.trim())];
 	if (!kana.length) return "";
-	return `${kana[0]}${" ＿".repeat(kana.length - 1)}（${kana.length} 個假名${romaji ? `，${romaji.trim()[0]}…` : ""}）`;
+	// 沒有讀音資料時拿到的是答案本身（可能有漢字），就說「個字」
+	const unit = kana.every((c) => /[\u3040-\u30ffー]/.test(c)) ? "個假名" : "個字";
+	return `${kana[0]}${" ＿".repeat(kana.length - 1)}（${kana.length} ${unit}${romaji ? `，${romaji.trim()[0]}…` : ""}）`;
 }
 
 /** 只差一個字母（多、少、錯一個）。 */
@@ -1237,12 +1239,14 @@ export class PracticeView extends ItemView {
 			else if (res.score !== undefined) fb.createDiv({ cls: "el-verdict", text: `${ok ? "✓" : "✗"} ${res.score} 分` });
 			else fb.createDiv({ cls: "el-verdict", text: "參考答案" });
 			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
+			// 西班牙文、日文：句子逐字可點、日文有讀音；英文維持原樣
+			const line = (s: string, zh?: string) => (this.lang === "en" ? fb.createDiv({ cls: "el-say el-sentence", text: s }) : this.wordLine(fb, s, { zh, bank: pq.bank }));
 			if (res.corrected && res.corrected !== text.trim()) {
 				fb.createDiv({ cls: "el-muted", text: "修改後：" });
-				fb.createDiv({ cls: "el-say el-sentence", text: res.corrected });
+				line(res.corrected);
 			}
 			fb.createDiv({ cls: "el-muted", text: "參考答案：" });
-			fb.createDiv({ cls: "el-say el-sentence", text: q.reference });
+			line(q.reference, q.prompt);
 			if (q.explanation) fb.createDiv({ cls: "el-explain", text: q.explanation });
 			this.nextButton(card);
 		};

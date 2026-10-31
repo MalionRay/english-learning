@@ -47,7 +47,7 @@
 - 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
 - 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
 - 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」
-- 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪
+- 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
 
 ## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
 - Lang = "en" | "es" | "ja"；西班牙文是拉丁美洲（墨西哥）用法，語音 es-US；日文給「從零開始」的學習者，語音 ja-JP（使用者 2026-10-31 決定）
@@ -61,6 +61,7 @@
 - 語音：字典真人錄音只有英文；Google Cloud 用 es-US／ja-JP 的 Chirp 3 HD（聲音沒有這個語言時改 Kore 再試）；系統語音每種語言各自選（english-learning:tts-voice:<lang>）；外掛畫面裡的 .el-say 用目前語言唸
 - 翻譯、批改、聽力批改、錯誤分析、修正題、拍照辨識、查原形（aiLemma：西班牙文、日文加入生字時都查一次）都依語言換提示
 - 統計依語言篩選作答（answerLang：紀錄的 lang → 題庫的 lang → 英文）
+- 生字本／句子本的「移除」（word-remove／phrase-remove）也要帶 lang，否則只對英文生效；生字本顯示的字不帶 "es:"／"ja:" 前綴；日文讀音分批查（READING_BATCH：每批最多 8 句、600 字），寫回快取前重讀以免互相蓋掉；日文標記生字只在還沒標記的部分找（v0.20.1）
 
 ## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
 - 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）

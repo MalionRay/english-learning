@@ -139,7 +139,7 @@ export class WordsView extends ItemView {
 				bottom.createSpan({ cls: "el-muted", text: tags.join("・") });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
 				rm.onclick = async () => {
-					await p.appendLog(p.makeEntry("word-remove", { word: w.word }));
+					await p.appendLog(p.makeEntry("word-remove", { word: w.word, ...(lang !== "en" ? { lang } : {}) }));
 					card.remove();
 				};
 			});
@@ -315,7 +315,7 @@ export class PhrasesView extends ItemView {
 				bottom.createSpan({ cls: "el-muted", text: `${PHRASE_SOURCE_LABEL[x.source] ?? "問過怎麼說"}${st ? `・下次複習：${relDay(st.due)}` : ""}` });
 				const rm = bottom.createEl("button", { text: "移除", cls: "el-zh-btn" });
 				rm.onclick = async () => {
-					await p.appendLog(p.makeEntry("phrase-remove", { key: x.key }));
+					await p.appendLog(p.makeEntry("phrase-remove", { key: x.key, ...(lang !== "en" ? { lang } : {}) }));
 					card.remove();
 				};
 			});
