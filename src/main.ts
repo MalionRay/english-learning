@@ -14,7 +14,8 @@ import {
 	VERIFY_VIEW,
 } from "./constants";
 import { Level } from "./generate";
-import { AppendOnlyWriter, DEBUG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, uuid } from "./logs";
+import { AppendOnlyWriter, DEBUG_ROOT, LOG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, uuid } from "./logs";
+import { cloudMonth, readCloudUsage } from "./cloudtts";
 import { CloudTtsModal, ELSettingTab } from "./settings";
 import { bankPath, generateForSource, importArticle, resetSource, waitForStatus } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
@@ -274,6 +275,13 @@ export default class EnglishLearningPlugin extends Plugin {
 		const e = { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, type: "user-remove", name };
 		await this.writer.append(usersPath(this.deviceId), JSON.stringify(e) + "\n");
 		await this.writer.flush();
+		// 這個月他用掉的 Google Cloud 語音字數要留下來（記到另一位使用者），不然刪掉後每月上限會少算，可能超過免費額度
+		const month = cloudMonth();
+		const carried = await readCloudUsage(this.app, month, `${LOG_ROOT}/${safeName(name)}`).catch(() => 0);
+		if (carried > 0) {
+			const keep = names.find((u) => u !== name)!;
+			await this.writeEntry({ ...this.entry("tts", { source: "cloud", chars: carried, month, carriedFrom: name }), user: keep });
+		}
 		const r = await deleteUserData(this.app, name);
 		await this.reloadUsers();
 		if (this.app.loadLocalStorage(LS_USER) === name) this.user = this.userNames()[0];

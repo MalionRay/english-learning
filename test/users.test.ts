@@ -111,3 +111,17 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 	await new Promise((r) => setTimeout(r, 10));
 	assert.deepEqual(removed, ["amy"]);
 });
+
+test("檢查修正：讀某位使用者這個月的 Google Cloud 語音字數（刪除時要轉記，免得每月上限少算）", async () => {
+	const { readCloudUsage, cloudMonth } = await import("../src/cloudtts");
+	const m = cloudMonth();
+	const line = (id: string, chars: number, month = m) => JSON.stringify({ id, ts: "", type: "tts", source: "cloud", chars, month });
+	const { app } = makeApp(
+		new Map<string, string>([
+			["logs/amy/ipad-1.jsonl", [line("1", 300), line("2", 200), line("3", 999, "2000-01")].join("\n") + "\n"],
+			["logs/ray/ipad-1.jsonl", line("4", 50) + "\n"],
+		]),
+	);
+	assert.equal(await readCloudUsage(app, m, "logs/amy"), 500);
+	assert.equal(await readCloudUsage(app, m), 550);
+});

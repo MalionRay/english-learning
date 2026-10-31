@@ -191,14 +191,39 @@ export function cachedReading(app: App, text: string): Reading | undefined {
 	return c?.[audioKey(text, "ja")];
 }
 
-/** 一次查多句的讀音（一個 API 呼叫）；已快取的不再送出。 */
-export async function readingMany(app: App, ai: AIBackend, texts: string[]): Promise<Reading[]> {
+function loadReadings(app: App): Record<string, Reading> {
 	const raw = app.loadLocalStorage(LS_READING);
-	const cache: Record<string, Reading> = raw && typeof raw === "object" ? (raw as Record<string, Reading>) : {};
+	return raw && typeof raw === "object" ? (raw as Record<string, Reading>) : {};
+}
+
+/** 一批最多幾句、幾個字（太長的話 AI 的回覆會被截斷）。 */
+export const READING_BATCH = { items: 8, chars: 600 };
+
+/** 把要查的句子分批：每批不超過 READING_BATCH。 */
+export function readingBatches<T extends { t: string }>(todo: T[]): T[][] {
+	const out: T[][] = [];
+	let cur: T[] = [];
+	let chars = 0;
+	for (const x of todo) {
+		if (cur.length && (cur.length >= READING_BATCH.items || chars + x.t.length > READING_BATCH.chars)) {
+			out.push(cur);
+			cur = [];
+			chars = 0;
+		}
+		cur.push(x);
+		chars += x.t.length;
+	}
+	if (cur.length) out.push(cur);
+	return out;
+}
+
+/** 查多句的讀音（分批呼叫，避免回覆被截斷）；已快取的不再送出。 */
+export async function readingMany(app: App, ai: AIBackend, texts: string[]): Promise<Reading[]> {
+	const cache = loadReadings(app);
 	const out: (Reading | undefined)[] = texts.map((t) => cache[audioKey(t, "ja")]);
-	const todo = texts.map((t, i) => ({ t, i })).filter((x) => !out[x.i]);
-	if (todo.length) {
-		const prompt = todo.map((x, k) => `${k + 1}. ${x.t}`).join("\n");
+	const todo = texts.map((t, i) => ({ t, i })).filter((x) => !out[x.i] && x.t.trim());
+	for (const batch of readingBatches(todo)) {
+		const prompt = batch.map((x, k) => `${k + 1}. ${x.t.replace(/\s*\n\s*/g, " ")}`).join("\n");
 		const res = await ai.complete(prompt, { system: READING_SYSTEM, json: true, maxOutputTokens: 4096, temperature: 0, hedgeAfterMs: 6000, timeoutMs: 25000 });
 		let arr: unknown;
 		try {
@@ -207,18 +232,20 @@ export async function readingMany(app: App, ai: AIBackend, texts: string[]): Pro
 			throw new Error("讀音結果格式不對");
 		}
 		if (!Array.isArray(arr)) throw new Error("讀音結果格式不對");
-		todo.forEach((x, k) => {
+		// 重新讀快取再寫回：同時有兩批在查時，才不會互相蓋掉
+		const latest = loadReadings(app);
+		batch.forEach((x, k) => {
 			const r = arr[k] as Record<string, unknown> | undefined;
 			const kana = typeof r?.kana === "string" ? r.kana.trim() : "";
 			const romaji = typeof r?.romaji === "string" ? r.romaji.trim() : "";
 			if (kana || romaji) {
 				out[x.i] = { kana, romaji };
-				cache[audioKey(x.t, "ja")] = { kana, romaji };
+				latest[audioKey(x.t, "ja")] = { kana, romaji };
 			}
 		});
-		const keys = Object.keys(cache);
-		if (keys.length > MAX_ENTRIES) for (const k of keys.slice(0, keys.length - MAX_ENTRIES)) delete cache[k];
-		app.saveLocalStorage(LS_READING, cache);
+		const keys = Object.keys(latest);
+		if (keys.length > MAX_ENTRIES) for (const k of keys.slice(0, keys.length - MAX_ENTRIES)) delete latest[k];
+		app.saveLocalStorage(LS_READING, latest);
 	}
 	return out.map((r) => r ?? { kana: "", romaji: "" });
 }

@@ -143,3 +143,9 @@ test("今日複習按鈕：開始畫面最上面，按下去混合出題", async
 	const types = new Set(view.items.map((x: any) => (x.word ? "word" : x.dict ? "listening" : x.phrase ? "phrase" : x.q.type)));
 	assert.ok(types.size >= 3, `mixed types: ${[...types].join(",")}`);
 });
+
+test("檢查修正：日文克漏字提示，沒有讀音資料時說「個字」", async () => {
+	const { kanaHint } = await import("../src/practice");
+	assert.equal(kanaHint("さんぽ", "sanpo"), "さ ＿ ＿（3 個假名，s…）");
+	assert.match(kanaHint("散歩"), /2 個字/);
+});

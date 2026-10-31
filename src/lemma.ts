@@ -255,7 +255,7 @@ export async function aiLemma(
 ): Promise<string | undefined> {
 	const system =
 		lang === "es"
-			? `Return the dictionary form (lemma) of the Spanish word as used in the sentence: verbs → infinitive (fui → ir, comiendo → comer), nouns and adjectives → masculine singular (casas → casa, bonitas → bonito). If it is already a dictionary form, return it unchanged.
+			? `Return the dictionary form (lemma) of the Spanish word as used in the sentence: verbs → infinitive (fui → ir, comiendo → comer), nouns → singular (casas → casa, árboles → árbol), adjectives → masculine singular (bonitas → bonito). If it is already a dictionary form, return it unchanged.
 Return ONLY JSON {"lemma": "<word>"}`
 			: lang === "ja"
 				? `Return the dictionary form (辞書形) of the Japanese word as used in the sentence, written as usually written in a dictionary (行きました → 行く, 食べて → 食べる, 高かった → 高い). Nouns and words already in dictionary form are returned unchanged.

@@ -116,9 +116,16 @@ export function markWords(text: string, words: string[], lang: Lang = "en"): { t
 		// 日文沒有空白：直接找第一個還沒標記的地方
 		for (const w of words.map((x) => x.trim()).filter(Boolean)) {
 			if (t.includes(`==${w}==`)) continue;
-			const i = t.indexOf(w);
-			if (i < 0) notFound.push(w);
-			else t = `${t.slice(0, i)}==${w}==${t.slice(i + w.length)}`;
+			// 只在還沒標記的部分找（不要標到 ==天気予報== 裡面）
+			const parts = t.split(/(==[^=\n]{1,60}==)/);
+			const k = parts.findIndex((p, j) => j % 2 === 0 && p.includes(w));
+			if (k < 0) {
+				if (!t.includes(w)) notFound.push(w); // 已經在別的標記裡的不算找不到
+				continue;
+			}
+			const i = parts[k].indexOf(w);
+			parts[k] = `${parts[k].slice(0, i)}==${w}==${parts[k].slice(i + w.length)}`;
+			t = parts.join("");
 		}
 		return { text: t, notFound };
 	}

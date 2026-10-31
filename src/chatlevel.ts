@@ -143,7 +143,7 @@ export function levelPrompt(est: LevelEstimate, level: Level, lang: Lang = "en")
 	const style = lang === "es" ? STYLE_ES : lang === "ja" ? STYLE_JA : STYLE;
 	return `
 
-Learner's current level in this chat: ${est.level} of ${maxChatLevel(level)} (measured from their recent messages; this overrides the CEFR guess above).
+Learner's current level in this chat: ${est.level} of ${maxChatLevel(level)} (measured from their recent messages; this overrides any level description above).
 ${style[est.level]}${level === "kid" ? " Keep it suitable for a child." : ""}
 Natural is not the same as difficult: never pick rare words or complex sentence structures just to make it harder. Adjust gradually — do not change style abruptly from one reply to the next.`;
 }
