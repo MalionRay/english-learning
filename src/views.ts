@@ -10,7 +10,7 @@ import { OcrResult, imageForAI, mergeOcr, ocrImage } from "./ocr";
 import { TFile } from "obsidian";
 import { LANG, LANGS, Lang } from "./lang";
 import { langSelect } from "./langview";
-import { AddUserModal } from "./userview";
+import { AddUserModal, DeleteUserModal } from "./userview";
 
 // =====================================================================
 // 主畫面：文章列表、匯入、出題
@@ -52,6 +52,12 @@ export class HomeView extends ItemView {
 			sel.onchange = () => (p.user = sel.value); // 會重畫所有畫面
 			const add = r.createEl("button", { text: "＋ 新增使用者" });
 			add.onclick = () => new AddUserModal(this.app, p).open();
+			// 刪除選單上目前選的使用者（要輸入名字確認；至少留一位）
+			const del = r.createEl("button", { text: "刪除使用者…", cls: "mod-warning" });
+			const only = p.users().length <= 1;
+			del.disabled = only;
+			if (only) del.setAttribute("title", "至少要留一位使用者");
+			del.onclick = () => new DeleteUserModal(this.app, p, sel.value).open();
 			langSelect(r, p);
 		});
 

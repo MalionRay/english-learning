@@ -151,5 +151,11 @@ test("主畫面（書本圖示）可以選使用者、新增使用者、選語�
 	sel.dispatchEvent(new window.Event("change"));
 	assert.equal(plugin.user, "amy");
 	assert.ok([...view.contentEl.querySelectorAll("button")].some((b: any) => b.textContent === "＋ 新增使用者"));
+	// 刪除：開的是選單上目前選的使用者，要輸入名字才能按
+	const del = [...view.contentEl.querySelectorAll("button")].find((b: any) => b.textContent === "刪除使用者…") as HTMLButtonElement;
+	assert.ok(del && !del.disabled);
+	del.click();
+	const m: any = (globalThis as any).__lastModal;
+	assert.match(m.title, /刪除使用者「amy」/);
 	assert.ok(view.contentEl.querySelector("select.el-lang-select"));
 });
