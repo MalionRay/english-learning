@@ -22,7 +22,7 @@ export class HomeView extends ItemView {
 		return HOME_VIEW;
 	}
 	getDisplayText() {
-		return "English Learning";
+		return "Language Learning";
 	}
 	getIcon() {
 		return "book-open";
@@ -42,7 +42,7 @@ export class HomeView extends ItemView {
 		const el = this.contentEl;
 		el.empty();
 		el.addClass("el-verify");
-		el.createEl("h3", { text: "English Learning" });
+		el.createEl("h3", { text: "Language Learning" });
 		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}` });
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "使用者" });
@@ -370,7 +370,7 @@ export class VerifyView extends ItemView {
 		return VERIFY_VIEW;
 	}
 	getDisplayText() {
-		return "English Learning 驗證";
+		return "Language Learning 驗證";
 	}
 	getIcon() {
 		return "flask-conical";

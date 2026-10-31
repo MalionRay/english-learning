@@ -139,7 +139,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.registerView(WORDS_VIEW, (leaf) => new WordsView(leaf, this));
 		this.registerView(PHRASES_VIEW, (leaf) => new PhrasesView(leaf, this));
 		this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
-		this.addRibbonIcon("messages-square", "English Learning：外語對話", () => this.openView(CHAT_VIEW));
+		this.addRibbonIcon("messages-square", "Language Learning：外語對話", () => this.openView(CHAT_VIEW));
 		this.addCommand({ id: "chat", name: "外語對話（英文、西班牙文、日文）", callback: () => this.openView(CHAT_VIEW) });
 		this.addCommand({ id: "phrases", name: "開啟句子本", callback: () => this.openView(PHRASES_VIEW) });
 		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
@@ -148,12 +148,12 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.addCommand({ id: "speed-test", name: "AI 速度測試", callback: () => new SpeedTestModal(this.app, this).open() });
 		this.addCommand({ id: "cloud-tts", name: "設定 Google Cloud 語音", callback: () => new CloudTtsModal(this.app, this, () => undefined).open() });
 		this.addCommand({ id: "stats", name: "開啟學習統計", callback: () => this.openView(STATS_VIEW) });
-		this.addRibbonIcon("graduation-cap", "English Learning：練習", () => this.openView(PRACTICE_VIEW));
+		this.addRibbonIcon("graduation-cap", "Language Learning：練習", () => this.openView(PRACTICE_VIEW));
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
 		this.registerView(HOME_VIEW, (leaf) => new HomeView(leaf, this));
 		this.registerView(VERIFY_VIEW, (leaf) => new VerifyView(leaf, this));
-		this.addRibbonIcon("book-open", "English Learning", () => this.openView(HOME_VIEW));
-		this.addRibbonIcon("flask-conical", "English Learning：驗證面板", () => this.openView(VERIFY_VIEW));
+		this.addRibbonIcon("book-open", "Language Learning", () => this.openView(HOME_VIEW));
+		this.addRibbonIcon("flask-conical", "Language Learning：驗證面板", () => this.openView(VERIFY_VIEW));
 
 		this.addCommand({ id: "open-home", name: "開啟主畫面", callback: () => this.openView(HOME_VIEW) });
 		this.addCommand({ id: "import", name: "匯入文章", callback: () => new ImportModal(this.app, this).open() });
@@ -368,7 +368,7 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	backend(): AIBackend {
 		const key = this.getApiKey();
-		if (!key) throw new Error("尚未設定 API key（設定 → English Learning）");
+		if (!key) throw new Error("尚未設定 API key（設定 → Language Learning）");
 		return new GeminiBackend(key, this.settings.geminiModel);
 	}
 
