@@ -4,6 +4,7 @@
 import { App } from "obsidian";
 import type { AIBackend } from "./ai";
 import { Bank, ChoiceQ, Question, parseQuestions, stripMarks, systemPrompt } from "./generate";
+import { LANG, langOf } from "./lang";
 import { listRecursive, uuid } from "./logs";
 import { stripFrontmatter } from "./sources";
 
@@ -100,7 +101,9 @@ export async function makeFix(app: App, ai: AIBackend, bank: Bank, old: Question
 	const f = app.vault.getAbstractFileByPath(bank.sourcePath);
 	if (f && "extension" in f) article = stripMarks(stripFrontmatter(await app.vault.cachedRead(f as never))).trim();
 	const art = article ? `\n<article>\n${article}\n</article>` : "";
-	const sys = systemPrompt(bank.level);
+	const lang = langOf(bank.lang);
+	const T = LANG[lang].english;
+	const sys = systemPrompt(bank.level, lang);
 	let kind = fixKind(reason);
 	if (old.type === "translate" && kind === "ambiguous") kind = "other"; // 翻譯題本來就接受多種答案
 
@@ -110,7 +113,7 @@ export async function makeFix(app: App, ai: AIBackend, bank: Bank, old: Question
 			const j = parseJson(
 				(
 					await ai.complete(
-						`The learner says the reference English translation of this question is wrong.
+						`The learner says the reference ${T} translation of this question is wrong.
 Chinese sentence: ${old.prompt}
 Reference translation: ${old.reference}
 Decide whether the reference is a correct, natural translation.
@@ -156,7 +159,7 @@ Return ONLY JSON {"verdict":"fixed"|"original_correct","answer":<0-3>,"explanati
 				await ai.complete(
 					`The learner says the Chinese translation or explanation of this question is wrong: ${reason}
 Question (JSON): ${describe(old)}
-Rewrite ONLY the Chinese parts correctly in natural Taiwanese Traditional Chinese. Do not change the English or the answer.
+Rewrite ONLY the Chinese parts correctly in natural Taiwanese Traditional Chinese. Do not change the ${T} or the answer.
 Return ONLY JSON ${fields}`,
 					{ system: sys, json: true, maxOutputTokens: 1500, temperature: 0.2 },
 				)
@@ -178,7 +181,7 @@ Return ONLY JSON ${fields}`,
 		kind === "ambiguous"
 			? `More than one option can be considered correct. Keep the same question and the same correct answer ("${(old as ChoiceQ).options?.[(old as ChoiceQ).answer] ?? ""}"), but replace the other options so that they are clearly wrong in this context.`
 			: kind === "unclear"
-				? "The learner could not understand the question or options. Rewrite it in clearer, simpler English that still tests the same word or point."
+				? `The learner could not understand the question or options. Rewrite it in clearer, simpler ${T} that still tests the same word or point.`
 				: "Fix the reported problem. Test the same word or point if it is valid; otherwise pick another point from the article.";
 	const prompt = `A learner reported a problem with this ${old.type} question.
 Reported problem: ${reason}
@@ -189,7 +192,7 @@ Write exactly ONE replacement question of type "${old.type}" following all the r
 Double-check that exactly one option is correct and the answer index points to it.
 Return {"questions": [ <the one question> ]}.${art}`;
 	const res = await ai.complete(prompt, { system: sys, json: true, maxOutputTokens: 2048, temperature: 0.4 });
-	const parsed = parseQuestions(res.text);
+	const parsed = parseQuestions(res.text, Math.random, lang);
 	const q = parsed.questions.find((x) => x.type === old.type);
 	if (!q) throw new Error(`AI 沒有產生可用的替代題${parsed.dropped[0] ? `（${parsed.dropped[0].reason}）` : ""}`);
 	if (old.type !== "translate" && (old as ChoiceQ).marked && q.type !== "translate") (q as ChoiceQ).marked = true;

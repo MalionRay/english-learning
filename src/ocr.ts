@@ -1,6 +1,7 @@
 // 拍照匯入：把書本或講義的照片縮小後交給 Gemini 辨識文字。
 // 照片不存進 Vault（只用來辨識），辨識結果填進匯入視窗讓使用者確認。
 import type { AIBackend, InlineImage } from "./ai";
+import { LANG, Lang } from "./lang";
 
 export const MAX_EDGE = 1600; // 長邊上限（px）：字還看得清楚，上傳又不會太大
 const JPEG_QUALITY = 0.85;
@@ -11,14 +12,17 @@ export interface OcrResult {
 	marked: string[]; // 照片上用螢光筆、底線或圈起來的字
 }
 
-const SYSTEM = `You transcribe English reading material from a photo (a book page, worksheet or handout) for a language learner.
-- Copy the main English text exactly as printed. Do not translate, summarize or correct it.
-- Join words hyphenated across line breaks, and join lines that belong to the same paragraph. Separate paragraphs with one blank line.
-- Leave out page numbers, running headers/footers, and exercise instructions that are not part of the reading text. Leave out Chinese text.
+function system(lang: Lang): string {
+	const L = lang === "en" ? "English" : LANG[lang].english.replace(/ \(.*\)$/, "");
+	return `You transcribe ${L} reading material from a photo (a book page, worksheet or handout) for a language learner.
+- Copy the main ${L} text exactly as printed. Do not translate, summarize or correct it.
+- ${lang === "ja" ? "Join lines that belong to the same paragraph (no spaces between Japanese characters). Leave out furigana printed above kanji." : "Join words hyphenated across line breaks, and join lines that belong to the same paragraph."} Separate paragraphs with one blank line.
+- Leave out page numbers, running headers/footers, and exercise instructions that are not part of the reading text. ${lang === "ja" ? "Leave out Chinese translations or notes, but keep ALL Japanese text including kanji." : "Leave out Chinese text."}
 - If the page has a heading, put it in "title" (otherwise "").
 - If some words or phrases are highlighted, underlined or circled by hand, list them in "marked" exactly as printed (otherwise []).
-- If there is no readable English text, return empty "text".
+- If there is no readable ${L} text, return empty "text".
 Return ONLY JSON: {"title": "...", "text": "...", "marked": ["..."]}`;
+}
 
 export function parseOcr(raw: string): OcrResult {
 	let j: Record<string, unknown>;
@@ -37,8 +41,9 @@ export function parseOcr(raw: string): OcrResult {
 	};
 }
 
-export async function ocrImage(ai: AIBackend, image: InlineImage): Promise<OcrResult> {
-	const res = await ai.complete("Transcribe the English text in this photo.", { system: SYSTEM, json: true, images: [image], maxOutputTokens: 8192, temperature: 0 });
+export async function ocrImage(ai: AIBackend, image: InlineImage, lang: Lang = "en"): Promise<OcrResult> {
+	const L = lang === "en" ? "English" : LANG[lang].english.replace(/ \(.*\)$/, "");
+	const res = await ai.complete(`Transcribe the ${L} text in this photo.`, { system: system(lang), json: true, images: [image], maxOutputTokens: 8192, temperature: 0 });
 	if (res.finishReason === "SAFETY") throw new Error("這張照片無法辨識");
 	return parseOcr(res.text);
 }

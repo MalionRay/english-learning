@@ -36,11 +36,13 @@ import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
 import { DeleteResult, USERS_DIR, UserInfo, checkNewName, deleteUserData, loadUserEvents, replayUsers, seedEvents, usersPath } from "./users";
 import { AddUserModal } from "./userview";
+import { LANG, LANGS, Lang, langOf } from "./lang";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
 declare const PLUGIN_VERSION: string;
 
 const LS_LAST_LEVEL = "english-learning:last-level";
+const LS_LANG = "english-learning:lang"; // { [user]: lang }：每位使用者在這台裝置上正在學的語言
 const LS_USERS_SEEDED = "english-learning:users-seeded"; // 舊版設定裡的使用者已寫進 english/users
 
 export default class EnglishLearningPlugin extends Plugin {
@@ -77,7 +79,7 @@ export default class EnglishLearningPlugin extends Plugin {
 			settings: () => this.settings,
 			apiKey: () => this.getApiKey(),
 			cloudKey: () => this.getCloudKey(),
-			systemSpeak: (t, r) => speak(this.app, t, r),
+			systemSpeak: (t, r, l) => speak(this.app, t, r, l),
 			log: (source, extra) => {
 				this.writeEntry(this.entry("tts", { source, ...extra })).catch(() => undefined);
 			},
@@ -136,8 +138,8 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.registerView(WORDS_VIEW, (leaf) => new WordsView(leaf, this));
 		this.registerView(PHRASES_VIEW, (leaf) => new PhrasesView(leaf, this));
 		this.registerView(CHAT_VIEW, (leaf) => new ChatView(leaf, this));
-		this.addRibbonIcon("messages-square", "English Learning：英文對話", () => this.openView(CHAT_VIEW));
-		this.addCommand({ id: "chat", name: "英文對話", callback: () => this.openView(CHAT_VIEW) });
+		this.addRibbonIcon("messages-square", "English Learning：外語對話", () => this.openView(CHAT_VIEW));
+		this.addCommand({ id: "chat", name: "外語對話（英文、西班牙文、日文）", callback: () => this.openView(CHAT_VIEW) });
 		this.addCommand({ id: "phrases", name: "開啟句子本", callback: () => this.openView(PHRASES_VIEW) });
 		this.registerView(STATS_VIEW, (leaf) => new StatsView(leaf, this));
 		this.addCommand({ id: "words", name: "開啟生字本", callback: () => this.openView(WORDS_VIEW) });
@@ -182,8 +184,15 @@ export default class EnglishLearningPlugin extends Plugin {
 				const mark = !say ? t?.closest?.(".markdown-reading-view mark, .markdown-preview-view mark") : null;
 				const el = say ?? mark;
 				if (!el) return;
-				if (mark && !this.app.workspace.getActiveFile()?.path.startsWith("english/")) return;
-				this.say(el.textContent ?? "");
+				const active = this.app.workspace.getActiveFile();
+				if (mark && !active?.path.startsWith("english/")) return;
+				// 語言：題庫裡的 <span lang="es">，或目前筆記（文章）的 frontmatter
+				const attr = (el as HTMLElement).closest?.("[lang]")?.getAttribute("lang");
+				// 外掛自己的畫面（練習、對話、生字本）：用目前選的語言；筆記裡：看 <span lang> 或筆記的 frontmatter
+				const inView = !!(el as HTMLElement).closest?.(".el-practice");
+				const fmLang = active ? this.app.metadataCache.getFileCache(active)?.frontmatter?.lang : undefined;
+				const lang = attr === "es" || attr === "ja" ? attr : inView ? this.lang : langOf(fmLang);
+				this.say(el.textContent ?? "", undefined, { lang });
 			},
 			true,
 		);
@@ -275,6 +284,20 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	set user(u: string) {
 		this.app.saveLocalStorage(LS_USER, safeName(u));
+		this.refreshViews();
+	}
+
+	/** 目前使用者在這台裝置上正在學的語言（每位使用者分開記）。 */
+	get lang(): Lang {
+		const all = this.app.loadLocalStorage(LS_LANG);
+		return langOf(all && typeof all === "object" ? (all as Record<string, unknown>)[this.user] : undefined);
+	}
+
+	set lang(l: Lang) {
+		const raw = this.app.loadLocalStorage(LS_LANG);
+		const all = raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {};
+		all[this.user] = l;
+		this.app.saveLocalStorage(LS_LANG, all);
 		this.refreshViews();
 	}
 
@@ -374,10 +397,10 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	// ---------- 文章匯入與出題 ----------
-	async importArticle(title: string, level: Level, text: string, unknownWords: string[] = []): Promise<TFile | null> {
+	async importArticle(title: string, level: Level, text: string, unknownWords: string[] = [], lang: Lang = "en"): Promise<TFile | null> {
 		try {
 			this.app.saveLocalStorage(LS_LAST_LEVEL, level);
-			const { file: f, notFound } = await importArticle(this.app, { title, level, text, deviceId: this.deviceId, unknownWords });
+			const { file: f, notFound } = await importArticle(this.app, { title, level, text, deviceId: this.deviceId, unknownWords, lang });
 			new Notice(`已匯入：${f.basename}${notFound.length ? `\n文章裡找不到這些字，沒有標記：${notFound.join("、")}` : ""}`, notFound.length ? 10000 : 4000);
 			this.debug(`import ${f.path}`);
 			this.refreshViews();
@@ -445,11 +468,12 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	// ---------- 朗讀 ----------
 	/** 必須在使用者點擊的事件裡同步呼叫（iOS 播放限制）。 */
-	say(text: string, rate?: number, opts: { noSave?: boolean } = {}) {
+	say(text: string, rate?: number, opts: { noSave?: boolean; lang?: Lang } = {}) {
 		unlockAudio();
-		this.pronouncer.pronounce(text, { ...(rate ? { rate } : {}), ...opts }).catch((e) => {
+		const lang = opts.lang ?? this.lang;
+		this.pronouncer.pronounce(text, { ...(rate ? { rate } : {}), ...opts, lang }).catch((e) => {
 			this.debug(`pronounce failed: ${errMsg(e)}`);
-			speak(this.app, text).catch((e2) => this.fail("朗讀", e2));
+			speak(this.app, text, rate, lang).catch((e2) => this.fail("朗讀", e2));
 		});
 	}
 
@@ -605,12 +629,13 @@ export default class EnglishLearningPlugin extends Plugin {
 	async planAudioCleanup(): Promise<CleanupPlan> {
 		const banks = await loadBanks(this.app);
 		const states = [];
-		const words: string[] = [];
-		for (const u of this.userNames()) {
-			const d = await loadPractice(this.app, u, "all");
-			states.push(d.states);
-			for (const w of d.words) if (w.reasons.has("manual")) words.push(w.word, ...w.forms);
-		}
+		const words: { text: string; lang: Lang }[] = [];
+		for (const u of this.userNames())
+			for (const lang of LANGS) {
+				const d = await loadPractice(this.app, u, "all", lang);
+				states.push(d.states);
+				for (const w of d.words) if (w.reasons.has("manual")) for (const t of [w.word, ...w.forms]) words.push({ text: t, lang });
+			}
 		return planCleanup(this.app, banks, states, words);
 	}
 
@@ -642,27 +667,30 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	/** 加入生字本（寫在目前使用者的 log）。有網路時順便查好中文。 */
-	async addWord(word: string, context?: string, bank?: string): Promise<void> {
-		let meaning = cachedZh(this.app, word);
+	async addWord(word: string, context?: string, bank?: string, lang: Lang = this.lang): Promise<void> {
+		let meaning = cachedZh(this.app, word, lang);
 		if (!meaning && navigator.onLine !== false) {
 			try {
-				meaning = (await translateMany(this.app, this.fastBackend(), [word]))[0];
+				meaning = (await translateMany(this.app, this.fastBackend(), [word], lang))[0];
 			} catch {
 				/* 之後複習時再查 */
 			}
 		}
 		// 看起來像變化形（went、studying…）且不在不規則表裡：請 AI 查原形，生字本才能合併
 		let lemma: string | undefined;
-		const key = wordKey(word);
-		if (!key.includes(" ") && !(key in IRREGULAR) && suffixCandidates(key).length && navigator.onLine !== false) {
+		const key = wordKey(word, lang);
+		// 英文：看起來像變化形才查；西班牙文、日文的變化很多，加入時都查一次原形
+		const ask = lang === "en" ? !key.includes(" ") && !(key in IRREGULAR) && suffixCandidates(key).length > 0 : !word.trim().includes(" ");
+		if (ask && navigator.onLine !== false) {
 			try {
-				lemma = await aiLemma(this.fastBackend(), word, context);
+				lemma = await aiLemma(this.fastBackend(), word, context, lang);
 			} catch {
 				/* 查不到就只用規則合併 */
 			}
 		}
 		const extra: Record<string, unknown> = { word };
-		if (lemma && lemma !== key) extra.lemma = lemma;
+		if (lemma && wordKey(lemma, lang) !== key) extra.lemma = lemma;
+		if (lang !== "en") extra.lang = lang;
 		if (meaning) extra.meaning = meaning;
 		if (context) extra.context = context;
 		if (bank) extra.bank = bank;

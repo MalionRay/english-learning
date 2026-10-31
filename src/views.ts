@@ -8,6 +8,8 @@ import { FlagLog, loadFlags } from "./flags";
 import { loadFixes } from "./fixes";
 import { OcrResult, imageForAI, mergeOcr, ocrImage } from "./ocr";
 import { TFile } from "obsidian";
+import { LANG, LANGS, Lang } from "./lang";
+import { langSelect } from "./langview";
 
 // =====================================================================
 // 主畫面：文章列表、匯入、出題
@@ -41,11 +43,12 @@ export class HomeView extends ItemView {
 		el.addClass("el-verify");
 		el.createEl("h3", { text: "English Learning" });
 		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}　使用者 ${p.user}` });
+		el.createDiv({ cls: "el-row" }, (r) => langSelect(r, p));
 
 		el.createDiv({ cls: "el-row" }, (r) => {
 			const pr = r.createEl("button", { text: "開始練習", cls: "mod-cta" });
 			pr.onclick = () => p.openView("english-learning-practice");
-			const ch = r.createEl("button", { text: "英文對話", cls: "mod-cta" });
+			const ch = r.createEl("button", { text: `${LANG[p.lang].name}對話`, cls: "mod-cta" });
 			ch.onclick = () => p.openView("english-learning-chat");
 			const pb = r.createEl("button", { text: "句子本" });
 			pb.onclick = () => p.openView("english-learning-phrases");
@@ -62,7 +65,7 @@ export class HomeView extends ItemView {
 		el.createEl("h4", { text: "文章" });
 		const sources = listSources(this.app);
 		if (!sources.length) {
-			el.createDiv({ cls: "el-muted", text: "還沒有文章。按「匯入文章」貼上一篇英文文章，或在 english/sources 資料夾新增筆記。" });
+			el.createDiv({ cls: "el-muted", text: "還沒有文章。按「匯入文章」貼上一篇文章（英文、西班牙文或日文），或在 english/sources 資料夾新增筆記。" });
 		}
 		const cards = new Map<string, HTMLElement>();
 		for (const s of sources) {
@@ -71,6 +74,7 @@ export class HomeView extends ItemView {
 			const head = card.createDiv({ cls: "el-row" });
 			const a = head.createEl("a", { text: s.title, cls: "el-title" });
 			a.onclick = () => this.app.workspace.getLeaf(false).openFile(s.file);
+			head.createSpan({ cls: "el-badge", text: LANG[s.lang].name });
 			if (s.level) head.createSpan({ cls: "el-badge", text: LEVEL_LABEL[s.level] });
 
 			const busy = p.generating.has(s.file.path);
@@ -131,10 +135,12 @@ export class ImportModal extends Modal {
 	private level: Level;
 	private text = "";
 	private unknown = "";
+	private lang: Lang;
 
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
 		super(app);
 		this.level = plugin.lastLevel;
+		this.lang = plugin.lang;
 	}
 
 	onOpen() {
@@ -146,6 +152,15 @@ export class ImportModal extends Modal {
 			t.setPlaceholder("例如：BBC - Why we sleep").onChange((v) => (this.title = v));
 			t.inputEl.style.width = "100%";
 			titleEl = t.inputEl;
+		});
+		new Setting(contentEl).setName("語言").addDropdown((d) => {
+			for (const l of LANGS) d.addOption(l, LANG[l].name);
+			d.setValue(this.lang).onChange((v) => {
+				this.lang = v as Lang;
+				ta.setAttribute("placeholder", `把${LANG[this.lang].name}文章貼在這裡`);
+				photoInfo.setText(`用 AI 辨識書本或講義上的${LANG[this.lang].name}（照片不會存下來）`);
+				update();
+			});
 		});
 		new Setting(contentEl).setName("程度").addDropdown((d) =>
 			d
@@ -165,7 +180,7 @@ export class ImportModal extends Modal {
 		// 拍照匯入：iPad／iPhone 可直接拍照或從相簿選，可一次選多頁
 		const photoRow = contentEl.createDiv({ cls: "el-row" });
 		const photoBtn = photoRow.createEl("button", { text: "📷 拍照／選照片" });
-		const photoInfo = photoRow.createSpan({ cls: "el-muted", text: "用 AI 辨識書本或講義上的英文（照片不會存下來）" });
+		const photoInfo = photoRow.createSpan({ cls: "el-muted", text: `用 AI 辨識書本或講義上的${LANG[this.lang].name}（照片不會存下來）` });
 		const picker = contentEl.createEl("input", { type: "file", attr: { accept: "image/*", multiple: "" } });
 		picker.style.display = "none";
 		photoBtn.onclick = () => picker.click();
@@ -183,7 +198,7 @@ export class ImportModal extends Modal {
 				const ai = this.plugin.backend();
 				for (let i = 0; i < files.length; i++) {
 					photoInfo.setText(`辨識中…（${i + 1}／${files.length}）`);
-					results.push(await ocrImage(ai, await imageForAI(files[i])));
+					results.push(await ocrImage(ai, await imageForAI(files[i]), this.lang));
 				}
 			} catch (e) {
 				photoInfo.setText(`辨識失敗：${(e as Error)?.message ?? e}`);
@@ -193,7 +208,7 @@ export class ImportModal extends Modal {
 			if (!results.length) return;
 			const r = mergeOcr(results);
 			if (!r.text) {
-				photoInfo.setText("照片裡沒有找到英文文字");
+				photoInfo.setText(`照片裡沒有找到${LANG[this.lang].name}文字`);
 				return;
 			}
 			ta.value = ta.value.trim() ? `${ta.value.trim()}\n\n${r.text}` : r.text;
@@ -213,21 +228,21 @@ export class ImportModal extends Modal {
 			photoInfo.setText(`已辨識 ${results.length} 張${r.marked.length ? `，找到 ${r.marked.length} 個標記的字` : ""}。請檢查文字有沒有錯再匯入。`);
 		};
 		const info = contentEl.createDiv({ cls: "el-muted" });
-		const ta = contentEl.createEl("textarea", { cls: "el-textarea", attr: { placeholder: "把英文文章貼在這裡", rows: "12" } });
+		const ta = contentEl.createEl("textarea", { cls: "el-textarea", attr: { placeholder: `把${LANG[this.lang].name}文章貼在這裡`, rows: "12" } });
 		const update = () => {
 			this.text = ta.value;
-			const w = wordCount(ta.value);
-			info.setText(w ? `${w} 個英文字 → 預計 ${planTotal(planFor(w))} 題${w > MAX_WORDS ? `（超過 ${MAX_WORDS} 字，請分段）` : ""}` : "");
+			const w = wordCount(ta.value, this.lang);
+			info.setText(w ? `${w} 個${LANG[this.lang].name}字 → 預計 ${planTotal(planFor(w))} 題${w > MAX_WORDS ? `（超過 ${MAX_WORDS} 字，請分段）` : ""}` : "");
 		};
 		ta.addEventListener("input", update);
 
 		const row = contentEl.createDiv({ cls: "el-row el-modal-buttons" });
 		const go = async (andGenerate: boolean) => {
 			if (!this.text.trim()) return new Notice("請先貼上文章");
-			if (!this.title.trim()) this.title = this.text.trim().split(/\s+/).slice(0, 6).join(" ");
+			if (!this.title.trim()) this.title = this.lang === "ja" ? this.text.trim().slice(0, 20) : this.text.trim().split(/\s+/).slice(0, 6).join(" ");
 			this.close();
 			const words = this.unknown.split(/[,，、;；\n]/).map((w) => w.trim()).filter(Boolean);
-			const file = await this.plugin.importArticle(this.title, this.level, this.text, words);
+			const file = await this.plugin.importArticle(this.title, this.level, this.text, words, this.lang);
 			if (file && andGenerate) await this.plugin.generate(file);
 		};
 		row.createEl("button", { text: "只匯入" }).onclick = () => go(false);

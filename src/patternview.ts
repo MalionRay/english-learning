@@ -3,6 +3,7 @@ import { App, Modal, Notice, TFile } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { phraseKey } from "./chat";
 import { loadPractice } from "./practice";
+import { LANG, Lang } from "./lang";
 import {
 	Drill,
 	MIN_ERRORS,
@@ -20,13 +21,14 @@ export const ANALYZE_DAYS = 60;
 export class PatternModal extends Modal {
 	private report: PatternReport | null = null;
 	private file: TFile | null = null;
+	private lang: Lang = "en";
 
 	constructor(app: App, private plugin: EnglishLearningPlugin) {
 		super(app);
 	}
 
 	onOpen() {
-		this.setTitle(`常見錯誤分析（${this.plugin.user}）`);
+		this.setTitle(`${LANG[this.plugin.lang].name}常見錯誤分析（${this.plugin.user}）`);
 		void this.run();
 	}
 
@@ -41,10 +43,12 @@ export class PatternModal extends Modal {
 		const p = this.plugin;
 		const since = Date.now() - ANALYZE_DAYS * 864e5;
 		try {
-			const d = await loadPractice(this.app, p.user, "all");
-			const items = pickErrors([...collectAnswerErrors(d.logs, d.banks, since), ...(await loadConversationErrors(this.app, p.user, since))]);
+			const lang = p.lang;
+			this.lang = lang;
+			const d = await loadPractice(this.app, p.user, "all", lang);
+			const items = pickErrors([...collectAnswerErrors(d.logs, d.banks, since, lang), ...(await loadConversationErrors(this.app, p.user, since, lang))]);
 			if (items.length < MIN_ERRORS) {
-				status.setText(`最近 ${ANALYZE_DAYS} 天只有 ${items.length} 筆可以分析的錯誤（至少要 ${MIN_ERRORS} 筆）。多做翻譯題、句子練習或英文對話之後再來分析。`);
+				status.setText(`最近 ${ANALYZE_DAYS} 天只有 ${items.length} 筆可以分析的錯誤（至少要 ${MIN_ERRORS} 筆）。多做翻譯題、句子練習或${LANG[lang].name}對話之後再來分析。`);
 				return;
 			}
 			if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -52,9 +56,9 @@ export class PatternModal extends Modal {
 				return;
 			}
 			status.setText(`AI 分析 ${items.length} 筆錯誤中…（約 10～30 秒）`);
-			this.report = await analyzePatterns(p.backend(), items, p.levelOf(p.user));
+			this.report = await analyzePatterns(p.backend(), items, p.levelOf(p.user), lang);
 			const now = new Date();
-			this.file = await saveReport(this.app, p.user, p.deviceId, reportMarkdown(this.report, p.user, now.toISOString()), now);
+			this.file = await saveReport(this.app, p.user, p.deviceId, reportMarkdown(this.report, p.user, now.toISOString(), lang), now);
 			this.draw();
 		} catch (e) {
 			status.setText(`分析失敗：${(e as Error)?.message ?? e}`);
@@ -105,7 +109,8 @@ export class PatternModal extends Modal {
 				const chosen = picked.filter((x) => x.box.checked).map((x) => x.d);
 				if (!chosen.length) return;
 				add.disabled = true;
-				for (const d of chosen) await this.plugin.addPhrase({ key: phraseKey(d.en), zh: d.zh, en: d.en, note: d.note, source: "pattern" });
+				const lang = this.lang;
+				for (const d of chosen) await this.plugin.addPhrase({ key: phraseKey(d.en, lang), zh: d.zh, en: d.en, note: d.note, source: "pattern", ...(lang !== "en" ? { lang } : {}) });
 				new Notice(`已加入句子本 ${chosen.length} 句，到「練習 → 句子」複習`);
 				this.close();
 			};

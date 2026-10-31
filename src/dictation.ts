@@ -1,6 +1,7 @@
 // 聽力理解（原聽寫）：從題庫裡的英文句子產生聽力項目。逐字比對（diffWords）保留備用。不碰 Vault，方便測試。
 import type { Bank, ChoiceQ, Question } from "./generate";
 import { audioKey } from "./pronounce";
+import { Lang, countWords, langOf } from "./lang";
 
 export const DICT_PREFIX = "listen:";
 export const DICT_PASS = 0.9;
@@ -11,6 +12,7 @@ export interface DictItem {
 	zh?: string;
 	bank: string;
 	level: Bank["level"];
+	lang: Lang;
 }
 
 function clean(s: string): string {
@@ -43,11 +45,12 @@ export function dictationItems(sources: { q: Question; bank: Bank }[]): DictItem
 		for (const s of sentencesOf(q)) {
 			const text = clean(s.text);
 			if (!text || text.includes("____")) continue;
-			const n = tokens(text).length;
+			const lang = langOf(bank.lang);
+			const n = lang === "en" ? tokens(text).length : countWords(text, lang);
 			const [min, max] = bank.level === "kid" ? [3, 14] : [4, 25];
 			if (n < min || n > max) continue;
-			const id = DICT_PREFIX + audioKey(text);
-			if (!out.has(id)) out.set(id, { id, text, zh: s.zh, bank: bank.sourceId, level: bank.level });
+			const id = DICT_PREFIX + audioKey(text, lang);
+			if (!out.has(id)) out.set(id, { id, text, zh: s.zh, bank: bank.sourceId, level: bank.level, lang });
 		}
 	}
 	return [...out.values()];

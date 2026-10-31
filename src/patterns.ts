@@ -7,6 +7,7 @@ import type { Bank, ChoiceQ, Level, Question, TranslateQ } from "./generate";
 import { CONV_DIR, parseConvMessages, parseReply } from "./chat";
 import type { AnswerLog, GradeLog } from "./srs";
 import { safeName } from "./logs";
+import { LANG, Lang, langOf } from "./lang";
 
 export const REPORT_DIR = "english/reports";
 
@@ -41,12 +42,12 @@ export interface PatternReport {
 	to: string;
 }
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9']+/g, " ").trim();
+const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}']+/gu, " ").trim();
 
 /** 從答題 log 收集錯誤（翻譯、句子、克漏字）。 */
-export function collectAnswerErrors(logs: (AnswerLog | GradeLog | { type: string; id: string; ts: string })[], banks: Bank[], sinceMs: number): ErrorItem[] {
+export function collectAnswerErrors(logs: (AnswerLog | GradeLog | { type: string; id: string; ts: string })[], banks: Bank[], sinceMs: number, lang: Lang = "en"): ErrorItem[] {
 	const qmap = new Map<string, Question>();
-	for (const b of banks) for (const q of b.questions) qmap.set(q.id, q);
+	for (const b of banks) if (langOf(b.lang) === lang) for (const q of b.questions) qmap.set(q.id, q);
 	const seen = new Set<string>();
 	const uniq = logs.filter((e) => e.id && !seen.has(e.id) && !!seen.add(e.id));
 	const grades = new Map<string, GradeLog>();
@@ -56,6 +57,8 @@ export function collectAnswerErrors(logs: (AnswerLog | GradeLog | { type: string
 		if (e.type !== "answer") continue;
 		const a = e as AnswerLog;
 		if (Date.parse(a.ts) < sinceMs || a.dontKnow || !a.text?.trim()) continue;
+		// 句子題不屬於某個題庫：用紀錄上的語言（舊紀錄沒有＝英文）；翻譯題要是這個語言的題庫
+		if (a.qtype === "phrase" ? langOf(a.lang) !== lang : a.qtype === "translate" && !qmap.has(a.qid)) continue;
 		if (a.qtype === "translate" || a.qtype === "phrase") {
 			const g = grades.get(a.id);
 			const score = g?.score ?? a.score;
@@ -84,12 +87,13 @@ export function collectChatErrors(messages: { role: string; text: string; ts: st
 }
 
 /** 讀這位使用者的對話檔。 */
-export async function loadConversationErrors(app: App, user: string, sinceMs: number): Promise<ErrorItem[]> {
+export async function loadConversationErrors(app: App, user: string, sinceMs: number, lang: Lang = "en"): Promise<ErrorItem[]> {
 	const out: ErrorItem[] = [];
 	for (const f of app.vault.getMarkdownFiles()) {
 		if (!f.path.startsWith(CONV_DIR + "/")) continue;
 		const fm = app.metadataCache.getFileCache(f)?.frontmatter;
 		if (fm && fm.user !== undefined && String(fm.user) !== user) continue;
+		if (fm && langOf(fm.lang) !== lang) continue;
 		const text = await app.vault.cachedRead(f);
 		if (!fm && !new RegExp(`^user: ${user.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(text)) continue;
 		out.push(...collectChatErrors(parseConvMessages(text), sinceMs));
@@ -113,9 +117,17 @@ export function pickErrors(items: ErrorItem[], max = 80): ErrorItem[] {
 
 export const MIN_ERRORS = 5;
 
-function system(level: Level): string {
-	return `You are an experienced English teacher for Taiwanese learners (${level === "kid" ? "a primary-school child, CEFR A1–A2" : "an adult, CEFR B1–B2"}).
-You receive a list of the learner's recent mistakes (what they wrote → the correct version). Find the RECURRING patterns — the same kind of mistake appearing more than once (e.g. verb tense, articles, prepositions, word order, singular/plural, Chinese-influenced phrasing, spelling of certain endings). Ignore one-off slips and capitalization/punctuation.
+function system(level: Level, lang: Lang = "en"): string {
+	const T = lang === "en" ? "English" : LANG[lang].english;
+	const who = lang === "en" ? (level === "kid" ? "a primary-school child, CEFR A1–A2" : "an adult, CEFR B1–B2") : `${level === "kid" ? "a primary-school child" : "an adult"}, beginner to intermediate`;
+	const kinds =
+		lang === "ja"
+			? "particles (は／が／を／に／で), verb forms, polite vs plain forms, word order, counters"
+			: lang === "es"
+				? "verb conjugation, ser/estar, gender and number agreement, prepositions, articles"
+				: "verb tense, articles, prepositions, word order, singular/plural, Chinese-influenced phrasing, spelling of certain endings";
+	return `You are an experienced ${T} teacher for Taiwanese learners (${who}).
+You receive a list of the learner's recent mistakes (what they wrote → the correct version). Find the RECURRING patterns — the same kind of mistake appearing more than once (e.g. ${kinds}). Ignore one-off slips and capitalization/punctuation.
 
 Return ONLY JSON:
 {
@@ -126,7 +138,7 @@ Return ONLY JSON:
    "explanation": "<繁中 1–3 句：規則是什麼、為什麼會錯（可提中文母語的影響）>",
    "examples": [{"wrong": "<copied from the list>", "right": "<copied from the list>"}],
    "tip": "<繁中一句：下次寫的時候可以怎麼檢查>",
-   "drills": [{"zh": "<繁中句子>", "en": "<natural English answer that uses the rule>", "note": "<繁中：重點提示>"}]
+   "drills": [{"zh": "<繁中句子>", "en": "<natural ${T} answer that uses the rule>", "note": "<繁中：重點提示>"}]
   }
  ]
 }
@@ -165,23 +177,24 @@ export function parsePatterns(text: string): { summary: string; patterns: Patter
 	return { summary: s(j.summary), patterns };
 }
 
-export async function analyzePatterns(ai: AIBackend, items: ErrorItem[], level: Level): Promise<PatternReport> {
-	const res = await ai.complete(patternPrompt(items), { system: system(level), json: true, maxOutputTokens: 4096, temperature: 0.3 });
+export async function analyzePatterns(ai: AIBackend, items: ErrorItem[], level: Level, lang: Lang = "en"): Promise<PatternReport> {
+	const res = await ai.complete(patternPrompt(items), { system: system(level, lang), json: true, maxOutputTokens: 4096, temperature: 0.3 });
 	const r = parsePatterns(res.text);
 	const ts = items.map((e) => e.ts).sort();
 	return { ...r, count: items.length, from: ts[0] ?? "", to: ts[ts.length - 1] ?? "" };
 }
 
-export function reportMarkdown(r: PatternReport, user: string, generatedAt: string): string {
+export function reportMarkdown(r: PatternReport, user: string, generatedAt: string, lang: Lang = "en"): string {
 	const day = (t: string) => t.slice(0, 10);
 	const lines = [
 		"---",
 		`user: ${user}`,
 		`generated: ${generatedAt}`,
 		`errors: ${r.count}`,
+		...(lang !== "en" ? [`lang: ${lang}`] : []),
 		"---",
 		"",
-		`# 常見錯誤分析（${day(generatedAt)}）`,
+		`# ${lang !== "en" ? `${LANG[lang].name}` : ""}常見錯誤分析（${day(generatedAt)}）`,
 		"",
 		`分析了 ${r.count} 筆錯誤（${day(r.from)} ～ ${day(r.to)}）。`,
 		"",

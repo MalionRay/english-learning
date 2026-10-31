@@ -6,6 +6,8 @@
 import type { Bank, ChoiceQ, Question } from "./generate";
 import type { AnswerLog, GradeLog, QState } from "./srs";
 import { lemmaMap } from "./lemma";
+import { Lang, langOf, langTag, normWord } from "./lang";
+import { pronLabel } from "./generate";
 
 export const WORD_PREFIX = "word:";
 
@@ -20,6 +22,7 @@ export interface WordLog {
 	context?: string;
 	bank?: string;
 	lemma?: string; // AI 查到的原形（例如 went → go）
+	lang?: Lang; // 沒有＝英文
 }
 
 export interface WordItem {
@@ -37,7 +40,12 @@ export interface WordItem {
 	baseFilled?: Set<string>; // 建立時暫用
 }
 
-export function wordKey(w: string): string {
+/** 生字本的 key：英文沿用舊格式；其他語言加上 "es:"／"ja:"（qid 就是 word:es:casa，各語言分開）。 */
+export function wordKey(w: string, lang: Lang = "en"): string {
+	if (lang !== "en") {
+		const k = normWord(w, lang);
+		return k ? langTag(lang) + k : "";
+	}
 	return w
 		.toLowerCase()
 		.replace(/[’‘]/g, "'")
@@ -45,6 +53,8 @@ export function wordKey(w: string): string {
 		.replace(/\s+/g, " ")
 		.trim();
 }
+
+const wordKeyOf = (w: string, lang: Lang) => wordKey(w, lang);
 
 export function wordQid(key: string): string {
 	return WORD_PREFIX + key;
@@ -57,7 +67,7 @@ export function questionWord(q: Question): { word: string; meaning?: string; ipa
 		const word = cq.word || (cq.direction !== "zh2en" ? cq.prompt : cq.options[cq.answer]);
 		if (!word) return null;
 		const meaning = cq.direction === "zh2en" ? cq.prompt : cq.options[cq.answer];
-		return { word, meaning, ipa: cq.ipa, context: cq.context, contextZh: cq.contextZh };
+		return { word, meaning, ipa: pronLabel(cq) || undefined, context: cq.context, contextZh: cq.contextZh };
 	}
 	if (q.type === "cloze") {
 		const cq = q as ChoiceQ;
@@ -67,15 +77,19 @@ export function questionWord(q: Question): { word: string; meaning?: string; ipa
 	return null;
 }
 
-export function buildWordBook(banks: Bank[], logs: (AnswerLog | GradeLog | WordLog)[]): WordItem[] {
-	return buildWordBookWithAliases(banks, logs).words;
+export function buildWordBook(banks: Bank[], logs: (AnswerLog | GradeLog | WordLog)[], lang: Lang = "en"): WordItem[] {
+	return buildWordBookWithAliases(banks, logs, lang).words;
 }
 
 /**
  * 生字本，以及合併時的別名（舊 key → 合併後 key），
  * 讓以前用舊 key 記的複習紀錄（qid "word:went"）算到合併後的字（"word:go"）。
  */
-export function buildWordBookWithAliases(banks: Bank[], logs: (AnswerLog | GradeLog | WordLog)[]): { words: WordItem[]; aliases: Map<string, string> } {
+export function buildWordBookWithAliases(allBanks: Bank[], allLogs: (AnswerLog | GradeLog | WordLog)[], lang: Lang = "en"): { words: WordItem[]; aliases: Map<string, string> } {
+	// 只看這個語言的題庫與加入／移除紀錄
+	const banks = allBanks.filter((b) => langOf(b.lang) === lang);
+	const logs = allLogs.filter((e) => (e.type !== "word-add" && e.type !== "word-remove") || langOf((e as WordLog).lang) === lang);
+	const wordKey = (w: string) => wordKeyOf(w, lang);
 	const items = new Map<string, WordItem>();
 	const qmap = new Map<string, { q: Question; bank: Bank }>();
 	for (const b of banks) for (const q of b.questions) qmap.set(q.id, { q, bank: b });
@@ -111,7 +125,8 @@ export function buildWordBookWithAliases(banks: Bank[], logs: (AnswerLog | Grade
 		}
 	}
 	rawKeys.delete("");
-	const canon = lemmaMap(rawKeys, explicit);
+	// 英文用規則合併變化形；其他語言只用 AI 查到的原形
+	const canon = lang === "en" ? lemmaMap(rawKeys, explicit) : new Map([...rawKeys].map((k) => [k, explicit.get(k) ?? k] as [string, string]));
 	const keyOf = (word: string) => {
 		const k = wordKey(word);
 		return canon.get(k) ?? k;

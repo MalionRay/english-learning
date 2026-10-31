@@ -13,7 +13,7 @@ function setup() {
 	let n = 0;
 	const plugin: any = {
 		app,
-		user: "ray",
+		user: "ray", lang: "en",
 		deviceId: "ipad-1",
 		settings: { users: ["ray", "kid"], newPerDay: 10 }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
@@ -21,7 +21,7 @@ function setup() {
 			return this.backend();
 		},
 		backend: () => ({ complete: async () => ({ text: '{"score":80,"feedback":"好","corrected":""}', usage: {}, model: "m" }) }),
-		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + n++, ts: new Date().toISOString(), device: "ipad-1", user: "ray", type, ...extra }),
+		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + n++, ts: new Date().toISOString(), device: "ipad-1", user: "ray", lang: "en", type, ...extra }),
 		appendLog: async (e: unknown) => void files.set("logs/ray/ipad-1.jsonl", String(files.get("logs/ray/ipad-1.jsonl")) + JSON.stringify(e) + "\n"),
 		say: () => undefined,
 		syncAndWait: async () => true,

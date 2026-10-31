@@ -247,13 +247,28 @@ export function lemmaMap(keys: Iterable<string>, explicit: Map<string, string> =
 }
 
 /** 請 AI 查原形（只在字看起來像變化形時呼叫）。查不到就回傳 undefined。 */
-export async function aiLemma(ai: { complete(p: string, o?: { system?: string; json?: boolean; maxOutputTokens?: number; temperature?: number }): Promise<{ text: string }> }, word: string, context?: string): Promise<string | undefined> {
-	const system = `Return the dictionary base form (lemma) of the English word as used in the sentence: verbs → infinitive (went → go, studying → study), nouns → singular (children → child), adjectives → positive (happier → happy). If it is already a base form, or its meaning as used is a different word (e.g. "left" meaning the direction), return it unchanged.
+export async function aiLemma(
+	ai: { complete(p: string, o?: { system?: string; json?: boolean; maxOutputTokens?: number; temperature?: number }): Promise<{ text: string }> },
+	word: string,
+	context?: string,
+	lang: "en" | "es" | "ja" = "en",
+): Promise<string | undefined> {
+	const system =
+		lang === "es"
+			? `Return the dictionary form (lemma) of the Spanish word as used in the sentence: verbs → infinitive (fui → ir, comiendo → comer), nouns and adjectives → masculine singular (casas → casa, bonitas → bonito). If it is already a dictionary form, return it unchanged.
+Return ONLY JSON {"lemma": "<word>"}`
+			: lang === "ja"
+				? `Return the dictionary form (辞書形) of the Japanese word as used in the sentence, written as usually written in a dictionary (行きました → 行く, 食べて → 食べる, 高かった → 高い). Nouns and words already in dictionary form are returned unchanged.
+Return ONLY JSON {"lemma": "<word>"}`
+				: `Return the dictionary base form (lemma) of the English word as used in the sentence: verbs → infinitive (went → go, studying → study), nouns → singular (children → child), adjectives → positive (happier → happy). If it is already a base form, or its meaning as used is a different word (e.g. "left" meaning the direction), return it unchanged.
 Return ONLY JSON {"lemma": "<word>"}`;
 	const res = await ai.complete(`Word: ${word}${context ? `\nSentence: ${context}` : ""}`, { system, json: true, maxOutputTokens: 64, temperature: 0 });
 	try {
 		const l = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")).lemma;
-		return typeof l === "string" && /^[A-Za-z'-]+$/.test(l.trim()) ? l.trim().toLowerCase() : undefined;
+		if (typeof l !== "string" || !l.trim()) return undefined;
+		if (lang === "ja") return l.trim().length <= 20 ? l.trim() : undefined;
+		const ok = lang === "es" ? /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+$/ : /^[A-Za-z'-]+$/;
+		return ok.test(l.trim()) ? l.trim().toLowerCase() : undefined;
 	} catch {
 		return undefined;
 	}

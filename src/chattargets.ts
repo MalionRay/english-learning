@@ -6,6 +6,7 @@ import { phraseQid } from "./chat";
 import type { QState } from "./srs";
 import { IRREGULAR, suffixCandidates } from "./lemma";
 import { WordItem, wordKey, wordQid } from "./words";
+import { Lang, LANG, normWord, wordsOf } from "./lang";
 
 export interface ChatTarget {
 	n: number; // 給 AI 看的編號（1 起）
@@ -42,8 +43,8 @@ function rank<T>(items: T[], qidOf: (x: T) => string, states: Map<string, QState
 
 /** 挑這次對話要複習的生字與句子。 */
 export function pickTargets(words: WordItem[], phrases: PhraseItem[], states: Map<string, QState>, now = Date.now(), nWords = TARGET_WORDS, nPhrases = TARGET_PHRASES): ChatTarget[] {
-	const ws = rank(words.filter((w) => !w.key.includes(" ") || w.key.split(" ").length <= 4), (w) => wordQid(w.key), states, now, nWords, 2);
-	const ps = rank(phrases.filter((p) => p.en.split(/\s+/).length <= 20), (p) => phraseQid(p.key), states, now, nPhrases, 1);
+	const ws = rank(words.filter((w) => !w.word.includes(" ") || w.word.split(" ").length <= 4), (w) => wordQid(w.key), states, now, nWords, 2);
+	const ps = rank(phrases.filter((p) => p.en.split(/\s+/).length <= 20 && p.en.length <= 120), (p) => phraseQid(p.key), states, now, nPhrases, 1);
 	const out: ChatTarget[] = [];
 	for (const w of ws)
 		out.push({ n: out.length + 1, kind: "word", qid: wordQid(w.key), en: w.word, zh: w.meaning, forms: [...w.forms], wasWrong: states.get(wordQid(w.key))?.lastCorrect === false });
@@ -53,7 +54,7 @@ export function pickTargets(words: WordItem[], phrases: PhraseItem[], states: Ma
 }
 
 /** 加在對話系統提示後面的複習說明。 */
-export function targetsPrompt(targets: ChatTarget[], level: "adult" | "kid"): string {
+export function targetsPrompt(targets: ChatTarget[], level: "adult" | "kid", lang: Lang = "en"): string {
 	if (!targets.length) return "";
 	const lines = targets.map((t) => `${t.n}. ${t.kind === "word" ? "word" : "sentence"}: ${t.en}${t.zh ? `  (${t.zh})` : ""}`);
 	return `
@@ -65,7 +66,7 @@ How to use them:
 - Over the conversation, naturally use these targets in YOUR replies (at most 1–2 per reply), in a context that makes the meaning clear${level === "kid" ? " and simple" : ""}.
 - Steer the conversation (e.g. ask a question) so the learner has a natural chance to use them. For a sentence target, the learner can use the same idea in their own words.
 - Never list the targets, never say they are review targets, and do not force several into one reply.
-- Add "learnerUsed": [numbers] to your JSON — the targets the learner used CORRECTLY and with the right meaning in their LAST message (a word in any form counts, e.g. went for go). Use [] if none.`;
+- Add "learnerUsed": [numbers] to your JSON — the targets the learner used CORRECTLY and with the right meaning in their LAST message (a word in any form counts${lang === "en" ? ", e.g. went for go" : lang === "es" ? ", e.g. fui for ir" : ", e.g. 行きました for 行く; kana or romaji spelling also counts"}). Use [] if none.${lang === "en" ? "" : ` All targets are ${LANG[lang].english}.`}`;
 }
 
 /** AI 回報的 learnerUsed（數字陣列）。 */
@@ -84,14 +85,23 @@ export function tokens(text: string): string[] {
 }
 
 /** 這個字（或它的變化形）有沒有出現在句子裡。片語要整段出現。 */
-export function mentionsWord(text: string, t: Pick<ChatTarget, "en" | "forms">): boolean {
+export function mentionsWord(text: string, t: Pick<ChatTarget, "en" | "forms">, lang: Lang = "en"): boolean {
+	if (lang === "ja") {
+		// 日文：直接找字（變化形靠 AI 判斷）
+		const hay = normWord(text, "ja");
+		return [t.en, ...t.forms].map((f) => normWord(f, "ja")).some((k) => k && hay.includes(k));
+	}
+	if (lang === "es") {
+		const hay = ` ${wordsOf(text, "es").join(" ")} `;
+		return [t.en, ...t.forms].map((f) => normWord(f, "es")).some((k) => k && hay.includes(` ${k} `));
+	}
 	const key = wordKey(t.en);
 	if (!key) return false;
 	if (key.includes(" ")) {
 		const hay = ` ${tokens(text).join(" ")} `;
-		return [key, ...t.forms.map(wordKey)].some((k) => k && hay.includes(` ${k} `));
+		return [key, ...t.forms.map((f) => wordKey(f))].some((k) => k && hay.includes(` ${k} `));
 	}
-	const forms = new Set([key, ...t.forms.map(wordKey)]);
+	const forms = new Set([key, ...t.forms.map((f) => wordKey(f))]);
 	return tokens(text).some((tok) => forms.has(tok) || IRREGULAR[tok] === key || suffixCandidates(tok).includes(key));
 }
 
@@ -100,10 +110,12 @@ export function mentionsWord(text: string, t: Pick<ChatTarget, "en" | "forms">):
  * - 以 AI 的判斷（learnerUsed）為主；單字另外確認訊息裡真的有這個字（避免 AI 亂報）
  * - AI 沒報、但單字出現在訊息裡而且這則沒有被糾正，也算
  */
-export function usedTargets(targets: ChatTarget[], learnerText: string, learnerUsed: number[], corrected: boolean): ChatTarget[] {
+export function usedTargets(targets: ChatTarget[], learnerText: string, learnerUsed: number[], corrected: boolean, lang: Lang = "en"): ChatTarget[] {
 	const said = new Set(learnerUsed);
 	return targets.filter((t) => {
-		if (t.kind === "word") return mentionsWord(learnerText, t) && (said.has(t.n) || !corrected);
+		// 日文的字可能用假名或羅馬拼音寫，找不到原字時以 AI 的判斷為準（但被糾正就不算）
+		if (t.kind === "word" && lang === "ja") return said.has(t.n) || (mentionsWord(learnerText, t, lang) && !corrected);
+		if (t.kind === "word") return mentionsWord(learnerText, t, lang) && (said.has(t.n) || !corrected);
 		return said.has(t.n);
 	});
 }

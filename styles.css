@@ -142,3 +142,11 @@
 .el-mastered > summary { cursor: pointer; padding: 8px 0; color: var(--text-muted); }
 .el-word-card.is-mastered { opacity: 0.75; }
 .el-book-summary { margin: 6px 0; }
+
+/* v0.20：多語言（西班牙文、日文） */
+.el-reading { margin: 2px 0 4px; line-height: 1.4; }
+.el-reading .el-kana { color: var(--text-muted); font-size: 0.9em; }
+.el-reading .el-romaji { color: var(--text-faint); font-size: 0.85em; font-style: italic; }
+.el-reading-btn:not(.is-on) { opacity: 0.5; }
+.el-kana-big { font-size: 4em; text-align: center; margin: 12px 0; line-height: 1.2; }
+.el-lang-select { margin-right: 8px; }
