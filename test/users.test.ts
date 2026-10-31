@@ -125,3 +125,31 @@ test("檢查修正：讀某位使用者這個月的 Google Cloud 語音字數（
 	assert.equal(await readCloudUsage(app, m, "logs/amy"), 500);
 	assert.equal(await readCloudUsage(app, m), 550);
 });
+
+test("主畫面（書本圖示）可以選使用者、新增使用者、選語言", async () => {
+	const { HomeView } = await import("../src/views");
+	const { app } = makeApp();
+	const plugin: any = {
+		app,
+		user: "ray",
+		lang: "en",
+		deviceId: "ipad-1",
+		generating: new Set(),
+		users: () => [
+			{ name: "ray", level: "adult", created: "" },
+			{ name: "amy", level: "kid", created: "" },
+		],
+		userNames: () => ["ray", "amy"],
+		openView: () => undefined,
+	};
+	const view: any = new HomeView({ app } as any, plugin);
+	view.render();
+	const sel = view.contentEl.querySelector("select.el-user-select") as HTMLSelectElement;
+	assert.deepEqual([...sel.options].map((o) => o.textContent), ["ray", "amy（小孩）"]);
+	assert.equal(sel.value, "ray");
+	sel.value = "amy";
+	sel.dispatchEvent(new window.Event("change"));
+	assert.equal(plugin.user, "amy");
+	assert.ok([...view.contentEl.querySelectorAll("button")].some((b: any) => b.textContent === "＋ 新增使用者"));
+	assert.ok(view.contentEl.querySelector("select.el-lang-select"));
+});
