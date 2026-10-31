@@ -46,7 +46,7 @@
 - 每位使用者有程度 adult／kid（plugin.levelOf(name)）：決定預設題庫、對話角色（Alex／Mia）與情境、批改與錯誤分析標準、對話程度範圍；不要再用名字是不是 "kid" 判斷
 - 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
 - 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
-- 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」；主畫面（書本圖示）也有使用者選單和「＋ 新增使用者」（v0.20.2）
+- 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」；主畫面（書本圖示）也有使用者選單、「＋ 新增使用者」（v0.20.2）和「刪除使用者…」（刪選單上選的那位，v0.20.3）
 - 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
 
 ## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
