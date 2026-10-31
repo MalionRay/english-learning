@@ -68,6 +68,11 @@ export function makeApp(files: FileMap = new Map()) {
 				exists: async (p: string) => files.has(p) || dirs.has(p) || [...files.keys()].some((k) => k.startsWith(p + "/")),
 				read: async (p: string) => String(files.get(p)),
 				write: async (p: string, t: string) => void files.set(p, t),
+				remove: async (p: string) => void files.delete(p),
+				rmdir: async (p: string) => {
+					for (const k of [...files.keys()]) if (k.startsWith(p + "/")) files.delete(k);
+					dirs.delete(p);
+				},
 				append: async (p: string, t: string) => void files.set(p, String(files.get(p) ?? "") + t),
 				list: async (folder: string) => {
 					const pre = folder + "/";

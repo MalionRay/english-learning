@@ -290,7 +290,7 @@ export class PracticeView extends ItemView {
 	private prefs(): Prefs {
 		const all = (this.app.loadLocalStorage(LS_PRACTICE) ?? {}) as Record<string, Partial<Prefs>>;
 		const u = this.plugin.user;
-		return { level: u === "kid" ? "kid" : "adult", size: 20, sync: true, ...(all[u] ?? {}) };
+		return { level: this.plugin.levelOf(u), size: 20, sync: true, ...(all[u] ?? {}) };
 	}
 
 	private savePrefs(p: Prefs) {
@@ -317,7 +317,7 @@ export class PracticeView extends ItemView {
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "使用者" });
 			const sel = r.createEl("select", { cls: "dropdown" });
-			for (const u of p.settings.users) sel.createEl("option", { text: u, value: u });
+			for (const u of p.userNames()) sel.createEl("option", { text: u, value: u });
 			sel.value = p.user;
 			sel.onchange = () => {
 				p.user = sel.value;
@@ -508,7 +508,7 @@ export class PracticeView extends ItemView {
 				continue;
 			}
 			const ph = a.qtype === "phrase" ? phraseMap.get(a.qid) : undefined;
-			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: (this.plugin.user === "kid" ? "kid" : "adult") as Level } : qmap.get(a.qid);
+			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: this.plugin.levelOf(this.plugin.user) } : qmap.get(a.qid);
 			if (!hit || !a.text) continue;
 			try {
 				const r = await gradeTranslation(p.fastBackend(), hit.q, a.text, hit.level);
@@ -765,7 +765,7 @@ export class PracticeView extends ItemView {
 			let res: { correct?: boolean; score?: number; feedback?: string; corrected?: string; pending?: boolean };
 			try {
 				if (!navigator.onLine) throw new Error("offline");
-				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.user === "kid" ? "kid" : "adult");
+				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.levelOf(this.plugin.user));
 			} catch (e) {
 				this.plugin.debug(`phrase grade failed: ${(e as Error)?.message ?? e}`);
 				res = { pending: true };

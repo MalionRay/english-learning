@@ -34,11 +34,14 @@ import { wordKey } from "./words";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
+import { DeleteResult, USERS_DIR, UserInfo, checkNewName, deleteUserData, loadUserEvents, replayUsers, seedEvents, usersPath } from "./users";
+import { AddUserModal } from "./userview";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
 declare const PLUGIN_VERSION: string;
 
 const LS_LAST_LEVEL = "english-learning:last-level";
+const LS_USERS_SEEDED = "english-learning:users-seeded"; // 舊版設定裡的使用者已寫進 english/users
 
 export default class EnglishLearningPlugin extends Plugin {
 	settings!: Settings;
@@ -50,11 +53,23 @@ export default class EnglishLearningPlugin extends Plugin {
 	pronouncer!: Pronouncer;
 	/** 最後一次 Vault 檔案變動的時間（判斷同步是否結束的備案） */
 	private lastVaultEvent = 0;
+	/** 使用者清單（從 english/users 重播；還沒讀到時用舊設定的名字） */
+	private userList: UserInfo[] = [];
+	private usersReload: number | null = null;
 
 	async onload() {
 		await this.loadSettings();
 		this.deviceId = this.loadOrCreateDeviceId();
 		this.writer = new AppendOnlyWriter(this.app);
+		await this.reloadUsers().catch((e) => console.error("english-learning: load users", e));
+		// 其他裝置新增／刪除使用者，同步下來後重讀
+		const onUsers = (f: { path: string }) => {
+			if (!f.path.startsWith(USERS_DIR + "/")) return;
+			if (this.usersReload) window.clearTimeout(this.usersReload);
+			this.usersReload = window.setTimeout(() => void this.reloadUsers().catch(() => undefined), 1000);
+		};
+		this.registerEvent(this.app.vault.on("create", onUsers));
+		this.registerEvent(this.app.vault.on("modify", onUsers));
 
 		this.pronouncer = new Pronouncer({
 			app: this.app,
@@ -98,6 +113,7 @@ export default class EnglishLearningPlugin extends Plugin {
 			this.register(() => window.clearTimeout(t));
 		});
 		this.addCommand({ id: "backup", name: "立即備份", callback: () => this.backup() });
+		this.addCommand({ id: "add-user", name: "新增使用者", callback: () => new AddUserModal(this.app, this).open() });
 
 		// 啟動 2 分鐘後，補齊「自己匯入的題庫」還沒有的錄音（額度用完就留到明天）
 		this.app.workspace.onLayoutReady(() => {
@@ -192,8 +208,69 @@ export default class EnglishLearningPlugin extends Plugin {
 
 	get user(): string {
 		const u = this.app.loadLocalStorage(LS_USER);
-		const users = this.settings.users;
+		const users = this.userNames();
 		return typeof u === "string" && users.includes(u) ? u : users[0] ?? "default";
+	}
+
+	/** 所有使用者的名字（依建立順序）。 */
+	userNames(): string[] {
+		return this.userList.length ? this.userList.map((u) => u.name) : this.settings.users;
+	}
+
+	users(): UserInfo[] {
+		return this.userList.length ? [...this.userList] : this.settings.users.map((name) => ({ name, level: name === "kid" ? "kid" : "adult", created: "" }));
+	}
+
+	/** 這位使用者是成人還是小孩（決定題庫、對話角色、批改標準）。 */
+	levelOf(name: string): Level {
+		const u = this.userList.find((x) => x.name === name);
+		if (u) return u.level;
+		return name === "kid" ? "kid" : "adult";
+	}
+
+	/** 從 english/users 重讀使用者清單；第一次執行時把舊設定裡的使用者寫進去。 */
+	async reloadUsers() {
+		const events = await loadUserEvents(this.app);
+		if (!this.app.loadLocalStorage(LS_USERS_SEEDED)) {
+			const seeds = seedEvents(this.settings.users, this.deviceId, uuid);
+			if (seeds.length) await this.writer.append(usersPath(this.deviceId), seeds.map((e) => JSON.stringify(e)).join("\n") + "\n");
+			events.push(...seeds);
+			this.app.saveLocalStorage(LS_USERS_SEEDED, "1");
+		}
+		const before = this.userNames().join(",");
+		this.userList = replayUsers(events);
+		if (this.userList.length) this.settings.users = this.userList.map((u) => u.name); // 舊版相容
+		if (before !== this.userNames().join(",")) this.refreshViews();
+	}
+
+	/** 新增使用者，並切換成他。 */
+	async addUser(rawName: string, level: Level): Promise<string> {
+		const err = checkNewName(rawName, this.userNames());
+		if (err) throw new Error(err);
+		const name = safeName(rawName);
+		const e = { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, type: "user-add", name, level };
+		await this.writer.append(usersPath(this.deviceId), JSON.stringify(e) + "\n");
+		await this.reloadUsers();
+		this.user = name;
+		this.debug(`user added: ${name} (${level})`);
+		this.triggerSync(true);
+		return name;
+	}
+
+	/** 刪除使用者與他所有的資料（答題紀錄、對話、報告，備份裡的也拿掉）。 */
+	async removeUser(name: string): Promise<DeleteResult> {
+		const names = this.userNames();
+		if (!names.includes(name)) throw new Error(`沒有「${name}」這位使用者`);
+		if (names.length <= 1) throw new Error("至少要留一位使用者");
+		const e = { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, type: "user-remove", name };
+		await this.writer.append(usersPath(this.deviceId), JSON.stringify(e) + "\n");
+		await this.writer.flush();
+		const r = await deleteUserData(this.app, name);
+		await this.reloadUsers();
+		if (this.app.loadLocalStorage(LS_USER) === name) this.user = this.userNames()[0];
+		this.debug(`user removed: ${name} (${r.files} files, ${r.backups} backups cleaned)`);
+		this.triggerSync(true);
+		return r;
 	}
 
 	set user(u: string) {
@@ -529,7 +606,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		const banks = await loadBanks(this.app);
 		const states = [];
 		const words: string[] = [];
-		for (const u of this.settings.users) {
+		for (const u of this.userNames()) {
 			const d = await loadPractice(this.app, u, "all");
 			states.push(d.states);
 			for (const w of d.words) if (w.reasons.has("manual")) words.push(w.word, ...w.forms);

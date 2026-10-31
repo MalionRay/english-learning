@@ -70,6 +70,11 @@ export class AppendOnlyWriter {
 		this.queue = job.catch(() => undefined);
 		return job;
 	}
+
+	/** 等前面排隊的寫入都完成。 */
+	flush(): Promise<void> {
+		return this.queue;
+	}
 }
 
 export function logPath(user: string, deviceId: string): string {

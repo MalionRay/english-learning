@@ -42,6 +42,13 @@
 - 系統語音的選擇與語速存 localStorage（各裝置可用語音不同）；選單（tts.voicePicker，設定頁與對話開始畫面都有）高品質排前面、選了直接用系統語音試唸
 - 點字「看中文意思」用 translate.inlineMeaning：意思顯示在字的旁邊（span.el-w-zh，先「查詢中…」，再按一次收起來；找不到字的位置才用 noticeMeaning 提示框）；translateMany 有 hedge 6 秒、逾時 25 秒；對話 AI 回覆出現 1.5 秒後在背景 prefetchMeanings（回覆、修正句、怎麼說裡的字，跳過常見字與已快取的，一次呼叫），點字就立刻有中文；字典真人錄音也改成先播放再存檔
 
+## 使用者（src/users.ts、src/userview.ts，v0.19.0）
+- 每位使用者有程度 adult／kid（plugin.levelOf(name)）：決定預設題庫、對話角色（Alex／Mia）與情境、批改與錯誤分析標準、對話程度範圍；不要再用名字是不是 "kid" 判斷
+- 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
+- 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
+- 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」
+- 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪
+
 ## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
 - 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）
 - 翻譯題離線時記 pending: true；之後由「作答的那台裝置」批改，另寫一筆 type "grade"（answerId 對應），不改原紀錄
@@ -49,7 +56,7 @@
 - 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
 - 每天新題上限（設定 newPerDay，預設 10，每種題型各自計算）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
 - 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
-- 題庫篩選：使用者名稱 kid 預設小孩題庫，其他人預設成人題庫；偏好存 localStorage
+- 題庫篩選：小孩使用者預設小孩題庫，成人預設成人題庫（plugin.levelOf）；偏好存 localStorage
 - 一次練一種題型（開始畫面依題型列出到期／新題數）；或按最上面的「今日複習」（v0.18.0，mixSession）：各題型到期的輪流混在一起，到期不夠題數再輪流補新題（各題型仍受每日新題上限）
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
 - 作答前按「中」→ hint: true；答對但 hint 時階梯不動、隔天再出
