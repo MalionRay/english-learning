@@ -89,7 +89,7 @@ export function classifyError(status: number, body: string, model: string): AIEr
 		if (daily) exhausted.set(model, quotaDay());
 		return daily ? new AIError(DAILY_MSG, 429, b, "daily") : new AIError("AI 使用太頻繁，請等一分鐘再試。", 429, b, "minute");
 	}
-	if (status === 400 && /api key/i.test(b)) return new AIError("API key 無效，請到「設定 → English Learning」重新輸入。", 400, b, "auth");
+	if (status === 400 && /api key/i.test(b)) return new AIError("API key 無效，請到「設定 → Language Learning」重新輸入。", 400, b, "auth");
 	if (status === 401 || status === 403) return new AIError("API key 沒有權限或已停用，請到 Google AI Studio 確認。", status, b, "auth");
 	if (status === 404) return new AIError(`找不到模型「${model}」，請到設定確認模型名稱。`, 404, b, "model");
 	if (status >= 500) return new AIError("Google AI 現在太忙（伺服器暫時無法使用），請過幾秒再送一次。", status, b, "server");

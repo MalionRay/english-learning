@@ -1,4 +1,10 @@
-# English Learning
+# Language Learning（語言學習）
+
+原名 English Learning；v0.21.0 起改名（外掛代號、資料夾、GitHub 專案名稱不變）。
+
+## v0.21.0：改名 Language Learning
+- 顯示的名字改成 Language Learning：設定裡的外掛名稱、左側圖示提示、主畫面標題、指令面板
+- 外掛代號仍是 english-learning、筆記庫的資料夾（english/…、logs/…）不變，所以不用重新安裝，設定和紀錄都保留，BRAT 照常更新
 
 ## v0.20.3：主畫面刪除使用者
 - 主畫面的使用者選單旁多了「刪除使用者…」：刪的是選單上選的那位，一樣要輸入名字確認、至少留一位
@@ -195,7 +201,7 @@
 
 另外有「立即同步」按鈕（觸發 Remotely Save），以及每台裝置的除錯紀錄 `debug/<deviceId>.md`。
 
-開啟方式：左側功能列的燒瓶圖示，或指令面板搜尋「English Learning」。
+開啟方式：左側功能列的燒瓶圖示，或指令面板搜尋「Language Learning」。
 
 ## 三裝置測試清單
 - [ ] 輪流在三台按「記一筆」並同步，合計正確

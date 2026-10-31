@@ -1,4 +1,6 @@
-# English Learning Plugin
+# Language Learning Plugin（原名 English Learning）
+
+- v0.21.0 起顯示名稱是 Language Learning；外掛 id 仍是 english-learning（改 id 會讓每台裝置要重新安裝、data.json 與 BRAT 追蹤失效），Vault 資料夾（english/…、logs/…）、localStorage 的 english-learning:* key、GitHub 專案名稱都不改
 
 ## 硬性限制
 - 必須能在 iOS 執行：manifest isDesktopOnly=false，禁用 Node API (fs, path, process)

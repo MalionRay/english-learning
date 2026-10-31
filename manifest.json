@@ -1,9 +1,9 @@
 {
   "id": "english-learning",
-  "name": "English Learning",
-  "version": "0.20.3",
+  "name": "Language Learning",
+  "version": "0.21.0",
   "minAppVersion": "1.11.4",
-  "description": "English learning system: article import, AI question generation, sync verification.",
+  "description": "Language learning (English, Spanish, Japanese): article import, AI questions, spaced review, conversation practice, multi-device sync.",
   "author": "Ray Gao",
   "isDesktopOnly": false
 }
