@@ -1,8 +1,8 @@
+import { drawUsersSection } from "./userview";
 import * as obsidian from "obsidian";
 import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { DEFAULTS, LS_FALLBACK_CLOUD_KEY, LS_FALLBACK_KEY, LS_SETTINGS_STEP } from "./constants";
-import { safeName } from "./logs";
 import { LS_TTS_RATE, getRate, voicePicker } from "./tts";
 import { CHIRP_VOICES, CLOUD_FREE_CHARS, cloudMonth } from "./cloudtts";
 import { unlockAudio } from "./pronounce";
@@ -29,16 +29,9 @@ export class ELSettingTab extends PluginSettingTab {
 			.setDesc("存在本機 localStorage，不會同步。每台裝置不同。")
 			.addText((t) => t.setValue(p.deviceId).setDisabled(true));
 
-		new Setting(containerEl)
-			.setName("使用者")
-			.setDesc("以逗號分隔，只能用英文小寫、數字、- 和 _。")
-			.addText((t) =>
-				t.setValue(p.settings.users.join(", ")).onChange(async (v) => {
-					p.settings.users = v.split(",").map(safeName).filter(Boolean);
-					if (!p.settings.users.length) p.settings.users = ["default"];
-					await p.saveSettings();
-				}),
-			);
+		mark("users");
+		drawUsersSection(containerEl, p, () => this.display());
+		new Setting(containerEl).setName("一般").setHeading();
 
 		new Setting(containerEl)
 			.setName("每天新題上限")

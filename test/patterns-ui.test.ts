@@ -19,6 +19,7 @@ test("錯誤分析畫面：產生報告、勾選練習句加入句子本", async
 		app,
 		user: "ray",
 		deviceId: "ipad-1",
+		levelOf: () => "adult",
 		backend: () => ({
 			complete: async (p: string) => {
 				prompt = p;
@@ -44,7 +45,7 @@ test("錯誤分析畫面：產生報告、勾選練習句加入句子本", async
 test("錯誤太少時不呼叫 AI", async () => {
 	const { app } = makeApp(new Map([["logs/ray/ipad-1.jsonl", ""]]));
 	let called = false;
-	const plugin: any = { app, user: "ray", deviceId: "ipad-1", backend: () => ({ complete: async () => ((called = true), { text: "{}" }) }) };
+	const plugin: any = { app, user: "ray", deviceId: "ipad-1", levelOf: () => "adult", backend: () => ({ complete: async () => ((called = true), { text: "{}" }) }) };
 	const m: any = new PatternModal(app, plugin);
 	m.onOpen();
 	await sleep(30);

@@ -7,6 +7,7 @@ import { BANK_DIR, SOURCES_DIR } from "./sources";
 import { FIX_DIR } from "./fixes";
 import { CONV_DIR } from "./chat";
 import { REPORT_DIR } from "./patterns";
+import { USERS_DIR } from "./users";
 
 export const BACKUP_DIR = "backup";
 export const LS_LAST_BACKUP = "english-learning:last-backup";
@@ -34,7 +35,7 @@ async function ensureFolder(app: App, folder: string) {
 
 export async function backupNow(app: App, deviceId: string): Promise<BackupResult> {
 	const files: Record<string, string> = {};
-	for (const dir of [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR]) {
+	for (const dir of [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR, USERS_DIR]) {
 		for (const path of await listRecursive(app, dir)) {
 			if (!/\.(jsonl|md)$/.test(path)) continue;
 			files[path] = await app.vault.adapter.read(path);

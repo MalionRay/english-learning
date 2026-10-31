@@ -52,7 +52,7 @@ export class PatternModal extends Modal {
 				return;
 			}
 			status.setText(`AI 分析 ${items.length} 筆錯誤中…（約 10～30 秒）`);
-			this.report = await analyzePatterns(p.backend(), items, p.user === "kid" ? "kid" : "adult");
+			this.report = await analyzePatterns(p.backend(), items, p.levelOf(p.user));
 			const now = new Date();
 			this.file = await saveReport(this.app, p.user, p.deviceId, reportMarkdown(this.report, p.user, now.toISOString()), now);
 			this.draw();

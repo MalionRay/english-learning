@@ -57,6 +57,7 @@ class Setting {
 	}
 	setName(n) { this.name = n; return this; }
 	setDesc(d) { this.desc = d; return this; }
+	setHeading() { this.heading = true; return this; }
 	addToggle(cb) {
 		const i = document.createElement("input");
 		i.type = "checkbox";
@@ -68,7 +69,7 @@ class Setting {
 	addButton(cb) {
 		const b = document.createElement("button");
 		this.el.appendChild(b);
-		const o = { buttonEl: b, setButtonText: (x) => { b.textContent = x; return o; }, setCta: () => o, setDisabled: (d) => { b.disabled = d; return o; }, onClick: (f) => { b.onclick = f; return o; } };
+		const o = { buttonEl: b, setButtonText: (x) => { b.textContent = x; return o; }, setCta: () => o, setWarning: () => o, setTooltip: (t) => { b.title = t; return o; }, setDisabled: (d) => { b.disabled = d; return o; }, onClick: (f) => { b.onclick = f; return o; } };
 		cb(o);
 		return this;
 	}

@@ -16,17 +16,13 @@ function header(el: HTMLElement, title: string, plugin: EnglishLearningPlugin, o
 	el.createDiv({ cls: "el-row" }, (r) => {
 		r.createSpan({ text: "使用者" });
 		const sel = r.createEl("select", { cls: "dropdown" });
-		for (const u of plugin.settings.users) sel.createEl("option", { text: u, value: u });
+		for (const u of plugin.userNames()) sel.createEl("option", { text: u, value: u });
 		sel.value = plugin.user;
 		sel.onchange = () => {
 			plugin.user = sel.value;
 			onChange();
 		};
 	});
-}
-
-function levelFor(user: string): "adult" | "kid" {
-	return user === "kid" ? "kid" : "adult";
 }
 
 /** 卡片上的狀態標籤。 */
@@ -91,7 +87,7 @@ export class WordsView extends ItemView {
 		el.addClass("el-verify");
 		el.addClass("el-practice");
 		header(el, "生字本", p, () => this.render());
-		const d = await loadPractice(this.app, p.user, levelFor(p.user));
+		const d = await loadPractice(this.app, p.user, p.levelOf(p.user));
 		const words = d.words;
 
 		el.createDiv({

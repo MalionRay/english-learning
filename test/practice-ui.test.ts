@@ -15,7 +15,7 @@ function setup() {
 		app,
 		user: "ray",
 		deviceId: "ipad-1",
-		settings: { users: ["ray", "kid"], newPerDay: 10 },
+		settings: { users: ["ray", "kid"], newPerDay: 10 }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();

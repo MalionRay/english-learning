@@ -86,7 +86,7 @@ export class ChatView extends ItemView {
 	}
 
 	private level(): Level {
-		return this.plugin.user === "kid" ? "kid" : "adult";
+		return this.plugin.levelOf(this.plugin.user);
 	}
 
 	private root(): HTMLElement {
@@ -112,14 +112,14 @@ export class ChatView extends ItemView {
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "使用者" });
 			const sel = r.createEl("select", { cls: "dropdown" });
-			for (const u of p.settings.users) sel.createEl("option", { text: u, value: u });
+			for (const u of p.userNames()) sel.createEl("option", { text: u, value: u });
 			sel.value = p.user;
 			sel.onchange = () => {
 				p.user = sel.value;
 				this.drawStart();
 			};
 		});
-		let topicId = prefs.topic ?? (p.user === "kid" ? "school" : "free");
+		let topicId = prefs.topic ?? (p.levelOf(p.user) === "kid" ? "school" : "free");
 		let articlePath = prefs.article ?? "";
 		const artRow = el.createDiv({ cls: "el-row" });
 		el.createDiv({ cls: "el-row" }, (r) => {
