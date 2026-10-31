@@ -10,6 +10,7 @@ import { OcrResult, imageForAI, mergeOcr, ocrImage } from "./ocr";
 import { TFile } from "obsidian";
 import { LANG, LANGS, Lang } from "./lang";
 import { langSelect } from "./langview";
+import { AddUserModal } from "./userview";
 
 // =====================================================================
 // 主畫面：文章列表、匯入、出題
@@ -42,8 +43,17 @@ export class HomeView extends ItemView {
 		el.empty();
 		el.addClass("el-verify");
 		el.createEl("h3", { text: "English Learning" });
-		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}　使用者 ${p.user}` });
-		el.createDiv({ cls: "el-row" }, (r) => langSelect(r, p));
+		el.createDiv({ cls: "el-muted", text: `裝置 ${p.deviceId}` });
+		el.createDiv({ cls: "el-row" }, (r) => {
+			r.createSpan({ text: "使用者" });
+			const sel = r.createEl("select", { cls: "dropdown el-user-select" });
+			for (const u of p.users()) sel.createEl("option", { text: `${u.name}${u.level === "kid" ? "（小孩）" : ""}`, value: u.name });
+			sel.value = p.user;
+			sel.onchange = () => (p.user = sel.value); // 會重畫所有畫面
+			const add = r.createEl("button", { text: "＋ 新增使用者" });
+			add.onclick = () => new AddUserModal(this.app, p).open();
+			langSelect(r, p);
+		});
 
 		el.createDiv({ cls: "el-row" }, (r) => {
 			const pr = r.createEl("button", { text: "開始練習", cls: "mod-cta" });
