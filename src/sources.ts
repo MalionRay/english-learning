@@ -19,6 +19,7 @@ import {
 } from "./generate";
 import { AIBackend, AIUsage } from "./ai";
 import { uuid } from "./logs";
+import { LANG, Lang, langOf } from "./lang";
 
 export const SOURCES_DIR = "english/sources";
 export const BANK_DIR = "english/bank";
@@ -32,6 +33,7 @@ export interface SourceInfo {
 	id?: string;
 	title: string;
 	level?: Level;
+	lang: Lang; // 沒寫＝英文
 	status: SourceStatus;
 	importedOn?: string;
 	generatingSince?: string;
@@ -74,7 +76,7 @@ export function stripFrontmatter(md: string): string {
 /** 匯入：在 english/sources 建立新筆記。 */
 export async function importArticle(
 	app: App,
-	opts: { title: string; level: Level; text: string; deviceId: string; unknownWords?: string[] },
+	opts: { title: string; level: Level; text: string; deviceId: string; unknownWords?: string[]; lang?: Lang },
 ): Promise<{ file: TFile; notFound: string[] }> {
 	await ensureFolder(app, SOURCES_DIR);
 	const base = safeFileName(opts.title);
@@ -85,13 +87,14 @@ export async function importArticle(
 		`id: "${shortId()}"`, // 加引號：避免 YAML 把 "12345678" 或 "1e234567" 讀成數字
 		`title: ${JSON.stringify(opts.title.trim() || base)}`,
 		`level: ${opts.level}`,
+		...(opts.lang && opts.lang !== "en" ? [`lang: ${opts.lang}`] : []),
 		`status: new`,
 		`importedOn: ${opts.deviceId}`,
 		`importedAt: ${new Date().toISOString()}`,
 		"---",
 		"",
 	].join("\n");
-	const { text, notFound } = markWords(cleanText(opts.text).trim(), opts.unknownWords ?? []);
+	const { text, notFound } = markWords(cleanText(opts.text).trim(), opts.unknownWords ?? [], opts.lang ?? "en");
 	const file = await app.vault.create(path, fm + text + "\n");
 	return { file, notFound };
 }
@@ -104,6 +107,7 @@ export function readSource(app: App, file: TFile): SourceInfo {
 		id: typeof fm.id === "string" ? fm.id : fm.id != null ? String(fm.id) : undefined,
 		title: typeof fm.title === "string" && fm.title ? fm.title : file.basename,
 		level: fm.level === "kid" || fm.level === "adult" ? fm.level : undefined,
+		lang: langOf(fm.lang),
 		status: st === "generated" || st === "generating" ? st : "new",
 		importedOn: typeof fm.importedOn === "string" ? fm.importedOn : undefined,
 		generatingSince: typeof fm.generatingSince === "string" ? fm.generatingSince : undefined,
@@ -199,9 +203,11 @@ export async function generateForSource(
 	const raw = cleanText(stripFrontmatter(await app.vault.read(file))).trim();
 	const marked = extractMarked(raw);
 	const article = stripMarks(raw);
-	const words = wordCount(article);
-	if (words < 30) throw new Error(`文章太短（${words} 個英文字），至少需要 30 個字`);
-	if (words > MAX_WORDS) throw new Error(`文章太長（${words} 個英文字），請分段匯入，每段最多 ${MAX_WORDS} 字`);
+	const lang = info.lang;
+	const words = wordCount(article, lang);
+	const unit = `個${LANG[lang].name}字`;
+	if (words < 30) throw new Error(`文章太短（${words} ${unit}），至少需要 30 個字`);
+	if (words > MAX_WORDS) throw new Error(`文章太長（${words} ${unit}），請分段匯入，每段最多 ${MAX_WORDS} 字`);
 
 	const id = info.id ?? shortId();
 	const level = info.level ?? levelIfMissing;
@@ -223,14 +229,14 @@ export async function generateForSource(
 	try {
 		const plan = planWithMarked(words, marked.length);
 		const res = await ai.complete(userPrompt(article, plan, marked), {
-			system: systemPrompt(level),
+			system: systemPrompt(level, lang),
 			json: true,
 			maxOutputTokens: 12000,
 			temperature: 0.7,
 		});
 		if (!res.text) throw new Error(`AI 沒有回傳內容（finishReason=${res.finishReason ?? "?"}）`);
 		if (res.finishReason === "MAX_TOKENS") throw new Error("AI 回覆被截斷（超過長度上限），請把文章分段再試");
-		const parsed = parseQuestions(res.text);
+		const parsed = parseQuestions(res.text, Math.random, lang);
 		const planned = planTotal(plan);
 		const markedSet = new Set(marked.map((m) => m.toLowerCase()));
 		for (const q of parsed.questions)
@@ -245,6 +251,7 @@ export async function generateForSource(
 			sourcePath: file.path,
 			title: info.title,
 			level,
+			...(lang !== "en" ? { lang } : {}),
 			model: res.model,
 			generatedAt: new Date().toISOString(),
 			device: deviceId,

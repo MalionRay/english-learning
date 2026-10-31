@@ -25,9 +25,9 @@ test("生字本：熟練的收在「已熟練」裡，其他依狀態排前面�
 	const t = (d: number) => new Date(Date.now() - d * 864e5).toISOString();
 	// harbor 連續答對 → 熟練；gentle 答錯 → 要加強
 	const logs = [
-		...[40, 30, 20, 10].map((d, i) => ({ id: "h" + i, ts: t(d), device: "d", user: "ray", type: "answer", qid: "word:harbor", qtype: "word", correct: true })),
-		{ id: "g0", ts: t(2), device: "d", user: "ray", type: "answer", qid: "v2", qtype: "vocab", correct: false },
-		{ id: "g1", ts: t(1), device: "d", user: "ray", type: "answer", qid: "word:gentle", qtype: "word", correct: false },
+		...[40, 30, 20, 10].map((d, i) => ({ id: "h" + i, ts: t(d), device: "d", user: "ray", lang: "en", type: "answer", qid: "word:harbor", qtype: "word", correct: true })),
+		{ id: "g0", ts: t(2), device: "d", user: "ray", lang: "en", type: "answer", qid: "v2", qtype: "vocab", correct: false },
+		{ id: "g1", ts: t(1), device: "d", user: "ray", lang: "en", type: "answer", qid: "word:gentle", qtype: "word", correct: false },
 	];
 	const { app } = makeApp(
 		new Map([
@@ -35,7 +35,7 @@ test("生字本：熟練的收在「已熟練」裡，其他依狀態排前面�
 			["logs/ray/d.jsonl", logs.map((l) => JSON.stringify(l)).join("\n") + "\n"],
 		]),
 	);
-	const plugin: any = { app, user: "ray", settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"), makeEntry: () => ({}), appendLog: async () => undefined };
+	const plugin: any = { app, user: "ray", lang: "en", settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"), makeEntry: () => ({}), appendLog: async () => undefined };
 	const view: any = new WordsView({ app } as any, plugin);
 	await view.onOpen();
 	await sleep(30);

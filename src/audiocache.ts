@@ -6,11 +6,13 @@ import { AUDIO_DIR, Pronouncer, audioKey, normalizeSpeech } from "./pronounce";
 import { DICT_PREFIX } from "./dictation";
 import { WORD_PREFIX, wordKey } from "./words";
 import type { QState } from "./srs";
+import { Lang, langOf } from "./lang";
 
 /** 一段要唸的文字，以及會用到它的題目 qid（用來判斷是否已熟練）。 */
 export interface AudioText {
 	text: string;
 	qids: string[];
+	lang?: Lang; // 沒有＝英文
 }
 
 function cleanSentence(s: string): string {
@@ -22,15 +24,16 @@ function cleanSentence(s: string): string {
 }
 
 /** 一題會唸到的文字：單字（含克漏字答案）與句子（原句、完整句、參考譯文）。 */
-export function audioTextsOf(q: Question): AudioText[] {
+export function audioTextsOf(q: Question, lang: Lang = "en"): AudioText[] {
 	const out: AudioText[] = [];
+	const tag = lang === "en" ? {} : { lang };
 	const sentence = (s: string | undefined) => {
 		if (!s) return;
 		const c = cleanSentence(s);
-		if (c) out.push({ text: c, qids: [q.id, DICT_PREFIX + audioKey(c)] });
+		if (c) out.push({ text: c, qids: [q.id, DICT_PREFIX + audioKey(c, lang)], ...tag });
 	};
 	const word = (w: string | undefined) => {
-		if (w) out.push({ text: w, qids: [q.id, WORD_PREFIX + wordKey(w)] });
+		if (w) out.push({ text: w, qids: [q.id, WORD_PREFIX + wordKey(w, lang)], ...tag });
 	};
 	if (q.type === "vocab") {
 		const c = q as ChoiceQ;
@@ -50,11 +53,11 @@ export function audioTextsOfBanks(banks: Bank[]): AudioText[] {
 	const map = new Map<string, AudioText>();
 	for (const b of banks)
 		for (const q of b.questions)
-			for (const t of audioTextsOf(q)) {
-				const k = audioKey(normalizeSpeech(t.text));
+			for (const t of audioTextsOf(q, langOf(b.lang))) {
+				const k = audioKey(normalizeSpeech(t.text), t.lang);
 				const prev = map.get(k);
 				if (prev) prev.qids.push(...t.qids);
-				else map.set(k, { text: t.text, qids: [...t.qids] });
+				else map.set(k, { ...t, qids: [...t.qids] });
 			}
 	return [...map.values()];
 }
@@ -74,13 +77,13 @@ export async function prefetchAudio(
 	shouldStop?: () => boolean,
 	busyWaitMs = 30_000,
 ): Promise<PrefetchResult> {
-	const todo = texts.filter((t) => !pron.has(t.text));
+	const todo = texts.filter((t) => !pron.has(t.text, t.lang));
 	const res: PrefetchResult = { total: texts.length, already: texts.length - todo.length, made: 0, stoppedByQuota: false };
 	let waits = 0;
 	for (let i = 0; i < todo.length; i++) {
 		if (shouldStop?.()) break;
 		if (typeof navigator !== "undefined" && navigator.onLine === false) break;
-		const r = await pron.ensure(todo[i].text);
+		const r = await pron.ensure(todo[i].text, todo[i].lang);
 		if (r === "dict" || r === "gemini") res.made++;
 		if (r === "quota") {
 			res.stoppedByQuota = true;
@@ -141,10 +144,10 @@ export interface CleanupPlan {
  * - 已熟練：用到這段文字的題目，凡是有人練過的都已熟練（間隔 7 天以上），而且至少有一題練過
  * - 不再使用：不屬於任何題庫，也不是任何人的生字（例如練習時隨手點來聽的字）
  */
-export function planCleanup(app: App, banks: Bank[], statesByUser: Map<string, QState>[], extraWords: string[]): CleanupPlan {
+export function planCleanup(app: App, banks: Bank[], statesByUser: Map<string, QState>[], extraWords: (string | { text: string; lang?: Lang })[]): CleanupPlan {
 	const texts = audioTextsOfBanks(banks);
-	const byKey = new Map(texts.map((t) => [audioKey(normalizeSpeech(t.text)), t]));
-	const keep = new Set(extraWords.map((w) => audioKey(normalizeSpeech(w))));
+	const byKey = new Map(texts.map((t) => [audioKey(normalizeSpeech(t.text), t.lang), t]));
+	const keep = new Set(extraWords.map((w) => (typeof w === "string" ? audioKey(normalizeSpeech(w)) : audioKey(normalizeSpeech(w.text), w.lang))));
 	const plan: CleanupPlan = { files: [], bytes: 0, mastered: 0, unused: 0 };
 	for (const f of app.vault.getFiles()) {
 		if (!f.path.startsWith(AUDIO_DIR + "/")) continue;

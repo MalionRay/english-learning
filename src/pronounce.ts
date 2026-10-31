@@ -7,6 +7,7 @@
 import { App, TAbstractFile, TFile, normalizePath, requestUrl } from "obsidian";
 import { AIError, quotaDay } from "./ai";
 import { CloudUsage, billedChars, cloudMonth, synthCloud } from "./cloudtts";
+import { LANG, Lang } from "./lang";
 
 export const AUDIO_DIR = "english/audio";
 const LS_DICT_MISS = "english-learning:dict-miss";
@@ -53,8 +54,10 @@ export function normalizeSpeech(text: string): string {
 		.trim();
 }
 
-export function audioKey(text: string): string {
-	return cyrb53(normalizeSpeech(text).toLowerCase());
+/** 錄音檔名：英文沿用舊的雜湊；其他語言前面加語言，避免同一個拼字（例如 no）共用錄音。 */
+export function audioKey(text: string, lang: Lang = "en"): string {
+	const t = normalizeSpeech(text).toLowerCase();
+	return cyrb53(lang === "en" ? t : `${lang}|${t}`);
 }
 
 export function isSingleWord(text: string): boolean {
@@ -142,8 +145,10 @@ async function playToEnd(data: ArrayBuffer, mime: string): Promise<void> {
 /** 把一段話切成「第一句」和「其他」：第一句先產生、先播，等待時間比較短。 */
 export function splitForSpeech(text: string): string[] {
 	const t = text.replace(/\s+/g, " ").trim();
-	const m = /^(.{12,}?[.!?])\s+(\S.*)$/.exec(t);
-	if (!m || t.length < 60) return t ? [t] : [];
+	// 日文：句號後面沒有空白，而且字數少很多
+	const ja = /[。！？]/.test(t);
+	const m = ja ? /^(.{6,}?[。！？])\s*(\S.*)$/.exec(t) : /^(.{12,}?[.!?])\s+(\S.*)$/.exec(t);
+	if (!m || t.length < (ja ? 25 : 60)) return t ? [t] : [];
 	return [m[1], m[2]];
 }
 
@@ -250,7 +255,7 @@ export interface PronounceDeps {
 	settings: () => PronounceSettings;
 	apiKey: () => string | null;
 	cloudKey?: () => string | null;
-	systemSpeak: (text: string, rate?: number) => Promise<unknown>;
+	systemSpeak: (text: string, rate?: number, lang?: Lang) => Promise<unknown>;
 	log: (source: PronounceSource, extra: Record<string, unknown>) => void;
 	notice: (msg: string) => void;
 	debug: (msg: string) => void;
@@ -288,15 +293,23 @@ export class Pronouncer {
 	}
 
 	/** 取得 Google Cloud 語音（MP3）；失敗回傳 null（並視情況暫停）。 */
-	private async fetchCloud(text: string, extra: Record<string, unknown> = {}): Promise<ArrayBuffer | null> {
+	private async fetchCloud(text: string, extra: Record<string, unknown> = {}, lang: Lang = "en"): Promise<ArrayBuffer | null> {
 		const key = await this.cloudReady(text);
 		if (!key) return null;
 		const s = this.d.settings();
+		const locale = LANG[lang].tts;
 		try {
-			const mp3 = await synthCloud(key, text, s.cloudVoice || "Kore");
+			let mp3: ArrayBuffer;
+			try {
+				mp3 = await synthCloud(key, text, s.cloudVoice || "Kore", locale);
+			} catch (e) {
+				// 不是每個聲音都有這個語言：改用 Kore 再試一次
+				if (lang === "en" || !(e instanceof AIError) || e.status !== 400 || (s.cloudVoice || "Kore") === "Kore") throw e;
+				mp3 = await synthCloud(key, text, "Kore", locale);
+			}
 			const chars = billedChars(text);
 			this.cloudUsage.add(chars);
-			this.d.log("cloud", { text: text.slice(0, 200), chars, month: cloudMonth(), voice: s.cloudVoice || "Kore", bytes: mp3.byteLength, ...extra });
+			this.d.log("cloud", { text: text.slice(0, 200), chars, month: cloudMonth(), voice: s.cloudVoice || "Kore", bytes: mp3.byteLength, ...(lang !== "en" ? { lang } : {}), ...extra });
 			return mp3;
 		} catch (e) {
 			const kind = e instanceof AIError ? e.kind : "other";
@@ -309,12 +322,12 @@ export class Pronouncer {
 	}
 
 	/** 設定頁「試聽」：一定用 Google Cloud 語音，失敗就丟錯誤。 */
-	async testCloud(text: string): Promise<void> {
+	async testCloud(text: string, lang: Lang = "en"): Promise<void> {
 		const s = this.d.settings();
 		const key = this.d.cloudKey?.();
 		if (!key) throw new Error("還沒設定 Google Cloud 語音的金鑰");
 		this.cloudOffUntil = 0;
-		const mp3 = await synthCloud(key, text, s.cloudVoice || "Kore");
+		const mp3 = await synthCloud(key, text, s.cloudVoice || "Kore", LANG[lang].tts);
 		const chars = billedChars(text);
 		this.cloudUsage.add(chars);
 		this.d.log("cloud", { text, chars, month: cloudMonth(), voice: s.cloudVoice || "Kore", bytes: mp3.byteLength, test: true });
@@ -356,10 +369,10 @@ export class Pronouncer {
 
 	// ---- 主流程 ----
 	/** 呼叫前請先在 click handler 裡同步呼叫 unlockAudio()。 */
-	async pronounce(text: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean } = {}): Promise<PronounceSource> {
+	async pronounce(text: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean; lang?: Lang } = {}): Promise<PronounceSource> {
 		const t = normalizeSpeech(text);
 		if (!t) return "system";
-		const key = audioKey(t);
+		const key = audioKey(t, opts.lang);
 		const running = this.inflight.get(key);
 		if (running && !opts.forceGemini && !opts.rate) return running;
 		const job = this.run(t, key, opts).finally(() => this.inflight.delete(key));
@@ -393,8 +406,9 @@ export class Pronouncer {
 		return daily;
 	}
 
-	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean }): Promise<PronounceSource> {
+	private async run(text: string, key: string, opts: { forceGemini?: boolean; rate?: number; noSave?: boolean; lang?: Lang }): Promise<PronounceSource> {
 		const rate = opts.rate ?? 1;
+		const lang = opts.lang ?? "en";
 		const s = this.d.settings();
 		// 1. 已存的錄音
 		if (!opts.forceGemini) {
@@ -410,7 +424,7 @@ export class Pronouncer {
 			}
 		}
 		// 2. 字典真人錄音（單字）
-		if (!opts.forceGemini && s.dictAudio && isSingleWord(text) && !this.dictMissed(text) && Date.now() > this.dictDownUntil) {
+		if (!opts.forceGemini && lang === "en" && s.dictAudio && isSingleWord(text) && !this.dictMissed(text) && Date.now() > this.dictDownUntil) {
 			try {
 				const got = await this.fetchDict(text);
 				if (got) {
@@ -429,7 +443,7 @@ export class Pronouncer {
 		}
 		// 3. Google Cloud 語音（Chirp 3 HD）
 		if (!opts.forceGemini) {
-			const mp3 = await this.fetchCloud(text, opts.noSave ? { noSave: true } : {});
+			const mp3 = await this.fetchCloud(text, opts.noSave ? { noSave: true } : {}, lang);
 			if (mp3) {
 				const playing = playBuffer(mp3, "audio/mpeg", rate);
 				if (!opts.noSave) await this.save(key, "mp3", mp3);
@@ -460,7 +474,7 @@ export class Pronouncer {
 			}
 		}
 		// 5. 系統語音
-		await this.d.systemSpeak(text, opts.rate);
+		await this.d.systemSpeak(text, opts.rate, lang);
 		return "system";
 	}
 
@@ -468,13 +482,13 @@ export class Pronouncer {
 	 * 預先產生用：確保這段文字有錄音（不播放、不用系統語音）。
 	 * 回傳 "cache"（已存在）、"dict"、"gemini"、"quota"（額度或上限用完）或 "none"（無法取得）。
 	 */
-	async ensure(text: string): Promise<"cache" | "dict" | "cloud" | "gemini" | "quota" | "busy" | "none"> {
+	async ensure(text: string, lang: Lang = "en"): Promise<"cache" | "dict" | "cloud" | "gemini" | "quota" | "busy" | "none"> {
 		const t = normalizeSpeech(text);
 		if (!t) return "none";
-		const key = audioKey(t);
+		const key = audioKey(t, lang);
 		if (this.index.has(key)) return "cache";
 		const s = this.d.settings();
-		if (s.dictAudio && isSingleWord(t) && !this.dictMissed(t) && Date.now() > this.dictDownUntil) {
+		if (lang === "en" && s.dictAudio && isSingleWord(t) && !this.dictMissed(t) && Date.now() > this.dictDownUntil) {
 			try {
 				const got = await this.fetchDict(t);
 				if (got) {
@@ -490,7 +504,7 @@ export class Pronouncer {
 		}
 		if ((s.cloudTts || (s.geminiTts && s.prefetchGemini)) && Date.now() < this.interactiveUntil) return "busy"; // 對話正在用語音：先讓路
 		if (s.cloudTts) {
-			const mp3 = await this.fetchCloud(t, { prefetch: true });
+			const mp3 = await this.fetchCloud(t, { prefetch: true }, lang);
 			if (mp3) {
 				await this.save(key, "mp3", mp3);
 				return "cloud";
@@ -515,8 +529,8 @@ export class Pronouncer {
 		}
 	}
 
-	has(text: string): boolean {
-		return this.index.has(audioKey(normalizeSpeech(text)));
+	has(text: string, lang: Lang = "en"): boolean {
+		return this.index.has(audioKey(normalizeSpeech(text), lang));
 	}
 
 	private quotaOk(s: PronounceSettings): boolean {
@@ -569,7 +583,7 @@ export class Pronouncer {
 	 * 不存檔。拿不到 Gemini 語音（額度用完、失敗）就回傳 false，由呼叫的地方改用系統語音。
 	 * 呼叫前請先在點擊事件裡呼叫 unlockAudio()。
 	 */
-	async speakNatural(text: string, isStopped: () => boolean = () => false): Promise<boolean> {
+	async speakNatural(text: string, isStopped: () => boolean = () => false, lang: Lang = "en"): Promise<boolean> {
 		const s = this.d.settings();
 		// 免費版每天只有 10 段：整段一次產生（切成兩段會用掉兩段額度）；付費後每日上限調高才切開先唸第一句
 		const t = normalizeSpeech(text);
@@ -577,7 +591,7 @@ export class Pronouncer {
 		if (!t) return false;
 		// Google Cloud 語音：切成第一句與其他，同時產生，第一句先唸
 		if (s.cloudTts && (await this.cloudReady(t))) {
-			const jobs = splitForSpeech(t).map((part) => this.fetchCloud(part, { noSave: true }));
+			const jobs = splitForSpeech(t).map((part) => this.fetchCloud(part, { noSave: true }, lang));
 			let played = false;
 			for (const job of jobs) {
 				const mp3 = await job;

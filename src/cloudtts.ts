@@ -43,7 +43,7 @@ export function billedChars(text: string): number {
 	return [...text].length;
 }
 
-export async function synthCloud(apiKey: string, text: string, voice: string): Promise<ArrayBuffer> {
+export async function synthCloud(apiKey: string, text: string, voice: string, locale = "en-US"): Promise<ArrayBuffer> {
 	let res;
 	try {
 		res = await requestUrl({
@@ -53,7 +53,7 @@ export async function synthCloud(apiKey: string, text: string, voice: string): P
 			headers: { "x-goog-api-key": apiKey },
 			body: JSON.stringify({
 				input: { text },
-				voice: { languageCode: "en-US", name: chirpVoiceId(voice) },
+				voice: { languageCode: locale, name: chirpVoiceId(voice, locale) },
 				audioConfig: { audioEncoding: "MP3" },
 			}),
 			throw: false,

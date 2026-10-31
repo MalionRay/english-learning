@@ -1,17 +1,34 @@
 // 翻譯題批改（AI）。只負責提示詞與解析，不碰 Vault。
 import type { AIBackend } from "./ai";
 import type { Level, TranslateQ } from "./generate";
+import { LANG, Lang } from "./lang";
 
 export interface GradeResult {
 	score: number; // 0-100
 	correct: boolean; // score >= PASS
 	feedback: string; // 繁中
-	corrected: string; // 依學習者原句最小幅度修改後的英文
+	corrected: string; // 依學習者原句最小幅度修改後的外語
 }
 
 export const PASS = 70;
 
-function system(level: Level): string {
+function system(level: Level, lang: Lang = "en"): string {
+	if (lang !== "en") {
+		const T = LANG[lang].english;
+		const extra =
+			lang === "ja"
+				? "The learner is a beginner: an answer in romaji, or in kana instead of kanji, is fully acceptable (judge the Japanese it represents). Write \"corrected\" in normal Japanese script."
+				: "Ignore missing accent marks and missing ¿¡ (mention them briefly in feedback). Any natural Latin American variant is correct.";
+		return `You are a ${T} teacher grading a Taiwanese learner's Chinese-to-${T} translation.
+Learner level: ${level === "kid" ? "primary-school child beginner; be encouraging and lenient on small slips" : lang === "ja" ? "adult complete beginner; be encouraging" : "adult (CEFR A2–B1)"}.
+${extra}
+
+Grade on: 1) meaning is fully and correctly conveyed (most important), 2) grammar, 3) natural word choice.
+Any natural, correct translation deserves full marks even if it differs from the reference.
+
+Return ONLY JSON:
+{"score": <integer 0-100>, "feedback": "<繁體中文（台灣用語），1–3 句：哪裡做得好、哪裡錯、怎麼改>", "corrected": "<the learner's sentence with the minimum edits needed to be correct and natural; if already correct, repeat it unchanged>"}`;
+	}
 	return `You are an English teacher grading a Taiwanese learner's Chinese-to-English translation.
 Learner level: ${level === "kid" ? "primary-school child (CEFR A1–A2); be encouraging and lenient on small slips such as articles or punctuation" : "adult (CEFR B1–B2)"}.
 
@@ -23,11 +40,11 @@ Return ONLY JSON:
 {"score": <integer 0-100>, "feedback": "<繁體中文（台灣用語），1–3 句：哪裡做得好、哪裡錯、怎麼改>", "corrected": "<the learner's sentence with the minimum edits needed to be correct and natural; if already correct, repeat it unchanged>"}`;
 }
 
-export async function gradeTranslation(ai: AIBackend, q: TranslateQ, answer: string, level: Level): Promise<GradeResult> {
+export async function gradeTranslation(ai: AIBackend, q: TranslateQ, answer: string, level: Level, lang: Lang = "en"): Promise<GradeResult> {
 	const prompt = `Chinese sentence: ${q.prompt}
 Reference translation: ${q.reference}
 Learner's translation: ${answer.trim()}`;
-	const res = await ai.complete(prompt, { system: system(level), json: true, maxOutputTokens: 512, temperature: 0.2 });
+	const res = await ai.complete(prompt, { system: system(level, lang), json: true, maxOutputTokens: 512, temperature: 0.2 });
 	let j: { score?: unknown; feedback?: unknown; corrected?: unknown };
 	try {
 		j = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
@@ -53,13 +70,14 @@ export interface ListenGrade {
 	feedback: string; // 繁中：聽懂了什麼、漏了什麼
 }
 
-export async function gradeListening(ai: AIBackend, english: string, zhRef: string | undefined, answer: string, level: Level): Promise<ListenGrade> {
-	const system = `You check whether a Taiwanese learner understood an English sentence they HEARD, based on their explanation in Chinese.
+export async function gradeListening(ai: AIBackend, english: string, zhRef: string | undefined, answer: string, level: Level, lang: Lang = "en"): Promise<ListenGrade> {
+	const L = lang === "en" ? "English" : LANG[lang].english;
+	const system = `You check whether a Taiwanese learner understood a ${L} sentence they HEARD, based on their explanation in Chinese.
 Learner level: ${level === "kid" ? "primary-school child; be encouraging and lenient" : "adult"}.
 Judge meaning only: the main idea, who did what, and key details. Wording, grammar and minor omissions of unimportant details do not matter.
 Score 0-100: 90+ fully understood; 70-89 main idea right with small gaps; below 70 the main idea is wrong or missing.
 Return ONLY JSON {"score": <integer>, "feedback": "<繁體中文（台灣用語）1–2 句：聽懂的部分、漏掉或誤解的部分>"}`;
-	const prompt = `English sentence: ${english}
+	const prompt = `${L} sentence: ${english}
 ${zhRef ? `Reference Chinese meaning: ${zhRef}\n` : ""}Learner's explanation: ${answer.trim()}`;
 	const res = await ai.complete(prompt, { system, json: true, maxOutputTokens: 400, temperature: 0.2 });
 	let j: { score?: unknown; feedback?: unknown };

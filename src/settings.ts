@@ -4,6 +4,7 @@ import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { DEFAULTS, LS_FALLBACK_CLOUD_KEY, LS_FALLBACK_KEY, LS_SETTINGS_STEP } from "./constants";
 import { LS_TTS_RATE, getRate, voicePicker } from "./tts";
+import { LANG, LANGS } from "./lang";
 import { CHIRP_VOICES, CLOUD_FREE_CHARS, cloudMonth } from "./cloudtts";
 import { unlockAudio } from "./pronounce";
 import { loadQuota } from "./pronounce";
@@ -58,7 +59,7 @@ export class ELSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("快速模型")
-			.setDesc("英文對話、批改、翻譯這類要馬上回應的地方用這個模型（出題、拍照辨識仍用上面的模型）。不能用時會自動改用上面的模型。對話慢的話可以用「AI 速度測試」比較。")
+			.setDesc("對話、批改、翻譯這類要馬上回應的地方用這個模型（出題、拍照辨識仍用上面的模型）。不能用時會自動改用上面的模型。對話慢的話可以用「AI 速度測試」比較。")
 			.addText((t) =>
 				t.setValue(p.settings.fastModel).onChange(async (v) => {
 					p.settings.fastModel = v.trim();
@@ -137,7 +138,7 @@ export class ELSettingTab extends PluginSettingTab {
 			);
 		new Setting(containerEl)
 			.setName("預先產生時也用 Gemini 語音")
-			.setDesc("句子也預先產生自然語音。免費版每天只有 10 段，會跟英文對話搶額度，建議開通付費後再打開。")
+			.setDesc("句子也預先產生自然語音。免費版每天只有 10 段，會跟對話搶額度，建議開通付費後再打開。")
 			.addToggle((t) =>
 				t.setValue(p.settings.prefetchGemini).onChange(async (v) => {
 					p.settings.prefetchGemini = v;
@@ -221,10 +222,12 @@ export class ELSettingTab extends PluginSettingTab {
 		this.cloudSection(containerEl);
 		mark("voices");
 
-		const voiceSetting = new Setting(containerEl)
-			.setName("系統語音")
-			.setDesc("每台裝置各自設定，選了會試唸。注意：iPad／iPhone 上 Apple 不讓 App 內的網頁使用另外下載的高品質語音，只能選內建的聲音。");
-		voicePicker(this.app, voiceSetting.controlEl);
+		for (const l of LANGS) {
+			const voiceSetting = new Setting(containerEl)
+				.setName(`系統語音（${LANG[l].name}）`)
+				.setDesc(l === "en" ? "每台裝置各自設定，選了會試唸。注意：iPad／iPhone 上 Apple 不讓 App 內的網頁使用另外下載的高品質語音，只能選內建的聲音。" : "每台裝置各自設定，選了會試唸。");
+			voicePicker(this.app, voiceSetting.controlEl, undefined, l);
+		}
 		new Setting(containerEl)
 			.setName("朗讀速度")
 			.setDesc("0.5～1.5，預設 0.9")

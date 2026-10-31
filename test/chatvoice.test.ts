@@ -52,7 +52,7 @@ function setup(replies: object[]) {
 	let n = 0;
 	const plugin: any = {
 		app,
-		user: "ray",
+		user: "ray", lang: "en",
 		deviceId: "ipad-1",
 		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
@@ -61,7 +61,7 @@ function setup(replies: object[]) {
 		},
 		backend: () => ({ chat: async (turns: any, o: any) => (calls.push({ turns, o }), { text: JSON.stringify(replies[n++]), usage: { inputTokens: 1, outputTokens: 1 }, model: "m" }) }),
 		appendText: async (f: any, s: string) => void files.set(f.path, String(files.get(f.path) ?? "") + s),
-		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + Math.random(), ts: new Date().toISOString(), device: "ipad-1", user: "ray", type, ...extra }),
+		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + Math.random(), ts: new Date().toISOString(), device: "ipad-1", user: "ray", lang: "en", type, ...extra }),
 		appendLog: async (e: any) => void files.set("logs/ray/ipad-1.jsonl", String(files.get("logs/ray/ipad-1.jsonl")) + JSON.stringify(e) + "\n"),
 		addPhrase: async () => undefined,
 		debug: () => undefined,

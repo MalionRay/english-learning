@@ -17,7 +17,7 @@ test("錯誤分析畫面：產生報告、勾選練習句加入句子本", async
 	const added: any[] = [];
 	const plugin: any = {
 		app,
-		user: "ray",
+		user: "ray", lang: "en",
 		deviceId: "ipad-1",
 		levelOf: () => "adult",
 		backend: () => ({
@@ -45,7 +45,7 @@ test("錯誤分析畫面：產生報告、勾選練習句加入句子本", async
 test("錯誤太少時不呼叫 AI", async () => {
 	const { app } = makeApp(new Map([["logs/ray/ipad-1.jsonl", ""]]));
 	let called = false;
-	const plugin: any = { app, user: "ray", deviceId: "ipad-1", levelOf: () => "adult", backend: () => ({ complete: async () => ((called = true), { text: "{}" }) }) };
+	const plugin: any = { app, user: "ray", lang: "en", deviceId: "ipad-1", levelOf: () => "adult", backend: () => ({ complete: async () => ((called = true), { text: "{}" }) }) };
 	const m: any = new PatternModal(app, plugin);
 	m.onOpen();
 	await sleep(30);
@@ -55,7 +55,7 @@ test("錯誤太少時不呼叫 AI", async () => {
 
 test("匯入視窗有拍照按鈕", () => {
 	const { app } = makeApp();
-	const m: any = new ImportModal(app, { lastLevel: "adult" } as any);
+	const m: any = new ImportModal(app, { lastLevel: "adult", lang: "en" } as any);
 	m.onOpen();
 	const input = m.contentEl.querySelector("input[type=file]");
 	assert.equal(input.getAttribute("accept"), "image/*");

@@ -2,6 +2,7 @@
 import type { ChatTurn } from "./ai";
 import type { ChoiceQ, Level, Question, TranslateQ } from "./generate";
 import { audioKey } from "./pronounce";
+import { LANG, Lang, langOf, learnerLine, normSentence, persona } from "./lang";
 
 export const CONV_DIR = "conversations";
 export const PHRASE_PREFIX = "phrase:";
@@ -11,13 +12,17 @@ export interface Correction {
 	corrected: string;
 	explanation: string; // 繁中
 	zh: string; // 學習者想表達的意思（繁中）——之後當句子練習的題目
+	reading?: string; // 日文：修正句的平假名
+	romaji?: string;
 }
 
 export interface HowTo {
 	zh: string;
-	en: string;
+	en: string; // 外語說法（欄位名稱沿用英文版）
 	alt?: string;
 	note?: string; // 繁中：語氣、場合
+	reading?: string; // 日文：平假名
+	romaji?: string;
 }
 
 export interface ChatReply {
@@ -25,6 +30,8 @@ export interface ChatReply {
 	howto: HowTo[];
 	reply: string;
 	replyZh: string;
+	replyReading?: string; // 日文：回覆的平假名
+	replyRomaji?: string; // 日文：回覆的羅馬拼音
 }
 
 export interface Topic {
@@ -43,16 +50,13 @@ export const TOPICS: Topic[] = [
 	{ id: "school", label: "學校（小孩）", prompt: "School life for a child: classes, friends, teachers, lunch, after-school activities." },
 ];
 
-export function chatSystemPrompt(level: Level, topic: Topic, article?: string): string {
+export function chatSystemPrompt(level: Level, topic: Topic, article?: string, lang: Lang = "en"): string {
+	if (lang !== "en") return foreignChatPrompt(level, topic, article, lang);
 	const learner =
 		level === "kid"
 			? "The learner is a Taiwanese primary-school child (CEFR A1–A2). Use very simple, short English sentences, be warm and encouraging. Only correct errors that change the meaning or are basic grammar (e.g. verb tense, subject-verb agreement)."
 			: "The learner is a Taiwanese adult (CEFR B1–B2). Speak naturally but clearly. Correct grammar mistakes, wrong word choices and clearly unnatural phrasing. Ignore capitalization, punctuation and tiny typos.";
-	const persona =
-		level === "kid"
-			? "You are Mia, a cheerful 12-year-old girl from Seattle who loves her cat Mochi, drawing, soccer and pancakes. Talk like a fun, kind friend, not a teacher."
-			: "You are Alex, a 32-year-old friend from Portland who works as a product designer, loves hiking, coffee, cooking Asian food and sci-fi movies, and once spent a month traveling in Taiwan. Talk like a real friend chatting, not like a teacher or a customer-service bot.";
-	return `${persona}
+	return `${persona("en", level)}
 ${learner}
 Scenario: ${topic.prompt}
 (If the scenario gives you a role, such as a waiter or an interviewer, play that role with the same natural personality.)
@@ -81,10 +85,61 @@ Rules:
 - All Chinese must be Traditional Chinese as used in Taiwan.${article ? `\n\n<article>\n${article}\n</article>` : ""}`;
 }
 
+/** 西班牙文、日文的對話提示：和英文版同樣的格式，日文多了讀音欄位。 */
+function foreignChatPrompt(level: Level, topic: Topic, article: string | undefined, lang: Lang): string {
+	const T = LANG[lang].english;
+	const W = lang === "ja" ? "Japanese" : "Spanish";
+	const correct =
+		level === "kid"
+			? "Be warm and encouraging. Only correct errors that change the meaning or are basic grammar."
+			: lang === "ja"
+				? "Correct grammar mistakes (particles, verb forms, word order) and wrong word choices, but keep explanations simple — they are a beginner."
+				: "Correct grammar mistakes (verb conjugation, gender and number agreement, ser/estar, prepositions), wrong word choices and clearly unnatural phrasing. Ignore capitalization, punctuation, missing ¿¡ and missing accent marks.";
+	const jaInput =
+		lang === "ja"
+			? `\nThe learner is a beginner: they may write Japanese in kana, kanji or ROMAJI (Latin letters, e.g. "watashi wa gakusei desu"). Romaji is fine — never correct a message just for being in romaji; judge the Japanese it represents. In "corrected", write proper Japanese script.\nSpeak simple, polite Japanese (です／ます form) and use mostly very common words; prefer hiragana for words beginners would not know in kanji.`
+			: "";
+	const jaFields = lang === "ja" ? `,\n "replyReading": "<the whole reply in hiragana (no kanji)>",\n "replyRomaji": "<the whole reply in Hepburn romaji>"` : "";
+	const jaCorr = lang === "ja" ? `, "reading": "<corrected in hiragana>", "romaji": "<corrected in romaji>"` : "";
+	const jaHow = lang === "ja" ? `, "reading": "<hiragana>", "romaji": "<romaji>"` : "";
+	return `${persona(lang, level)}
+${learnerLine(lang, level)} ${correct}${jaInput}
+Scenario: ${topic.prompt}
+(Talk in ${T}. If the scenario gives you a role, such as a waiter or an interviewer, play that role with the same natural personality.)
+
+How to talk (this matters a lot):
+- React to the specific details the learner just said; show real interest, curiosity or humor.
+- Sometimes share a short opinion, story or experience of your own, then pass the turn back.
+- Do NOT open with generic praise and do not echo their sentence back. Vary how you start.
+- Use everyday spoken ${W}; avoid formal or textbook phrasing.
+- Ask at most ONE question per reply, and not every reply has to end with a question.
+- Keep it short like a chat message: usually 1–3 sentences.
+
+Every learner message may be in ${W}, in Chinese, or ${W} mixed with Chinese words.
+For EVERY learner message, return ONLY a JSON object:
+{
+ "correction": null | {"original": "<the learner's sentence(s) that need fixing>", "corrected": "<natural, correct ${W} for what they meant>", "explanation": "<繁體中文（台灣用語）1–2 句：錯在哪、為什麼>", "zh": "<繁體中文：學習者想表達的意思>"${jaCorr}},
+ "howto": [ {"zh": "<繁中 phrase the learner asked about or wrote in Chinese>", "en": "<natural ${W} way to say it>", "alt": "<optional second way>", "note": "<繁中：語氣、使用場合>"${jaHow}} ],
+ "reply": "<your natural spoken-${W} reply, following 'How to talk'>",
+ "replyZh": "<繁體中文翻譯 of reply>"${jaFields}
+}
+
+Rules:
+- correction: only when the learner wrote ${W} with a real mistake. If their ${W} is correct, use null. If they wrote Chinese words inside a ${W} sentence, set "corrected" to the full ${W} sentence AND add each Chinese part to "howto".
+- howto: when the learner writes in Chinese (for example 「我要去一下廁所${LANG[lang].name}該怎麼說」 or just a Chinese sentence), teach 1–2 natural ways to say it in "howto" (the field is named "en" but must contain ${W}), and in "reply" briefly encourage them to try using it. Otherwise use [].
+- Never put corrections or teaching inside "reply"; "reply" is only your natural conversational turn.
+- All Chinese must be Traditional Chinese as used in Taiwan.${article ? `\n\n<article>\n${article}\n</article>` : ""}`;
+}
+
 /** 語音訊息：和錄音一起送出的指示。AI 要先逐字聽寫到 "heard"，再照平常的方式回覆。 */
 export const VOICE_TURN = `(The learner's message is the attached audio recording.
 First write exactly what they said into "heard": verbatim, keeping their grammar mistakes and word choices (do NOT correct them there); write any Chinese they spoke in Traditional Chinese characters; if a word is unclear, choose the most likely word from context — do not treat accent or pronunciation as a grammar mistake.
 Then reply to "heard" exactly as you would to a typed message, using the same JSON plus the "heard" field. If the audio has no speech, set "heard" to "" and reply asking them to say it again.)`;
+
+export function voiceTurn(lang: Lang): string {
+	if (lang === "en") return VOICE_TURN;
+	return VOICE_TURN.replace("write any Chinese they spoke in Traditional Chinese characters;", `write ${lang === "ja" ? "Japanese in normal Japanese script (kanji and kana)" : "Spanish with correct accents"} and any Chinese they spoke in Traditional Chinese characters;`);
+}
 
 /** 語音訊息時 AI 聽到的內容。 */
 export function parseHeard(text: string): string | null {
@@ -112,14 +167,26 @@ export function parseReply(text: string): ChatReply {
 		return { correction: null, howto: [], reply: text.trim(), replyZh: "" };
 	}
 	const c = j.correction as Record<string, unknown> | null | undefined;
-	const correction =
+	const correction: Correction | null =
 		c && str(c.corrected) && str(c.original) && str(c.corrected).toLowerCase() !== str(c.original).toLowerCase()
 			? { original: str(c.original), corrected: str(c.corrected), explanation: str(c.explanation), zh: str(c.zh) }
 			: null;
+	if (correction && c) {
+		if (str(c.reading)) correction.reading = str(c.reading);
+		if (str(c.romaji)) correction.romaji = str(c.romaji);
+	}
 	const howto = (Array.isArray(j.howto) ? j.howto : [])
-		.map((h: Record<string, unknown>) => ({ zh: str(h?.zh), en: str(h?.en), alt: str(h?.alt) || undefined, note: str(h?.note) || undefined }))
+		.map((h: Record<string, unknown>) => {
+			const o: HowTo = { zh: str(h?.zh), en: str(h?.en), alt: str(h?.alt) || undefined, note: str(h?.note) || undefined };
+			if (str(h?.reading)) o.reading = str(h?.reading);
+			if (str(h?.romaji)) o.romaji = str(h?.romaji);
+			return o;
+		})
 		.filter((h) => h.zh && h.en);
-	return { correction, howto, reply: str(j.reply), replyZh: str(j.replyZh) };
+	const out: ChatReply = { correction, howto, reply: str(j.reply), replyZh: str(j.replyZh) };
+	if (str(j.replyReading)) out.replyReading = str(j.replyReading);
+	if (str(j.replyRomaji)) out.replyRomaji = str(j.replyRomaji);
+	return out;
 }
 
 // ---------------------------------------------------------------------
@@ -128,6 +195,7 @@ export function parseReply(text: string): ChatReply {
 export interface ConvMeta {
 	user: string;
 	level: Level;
+	lang?: Lang; // 沒有＝英文
 	topic: string;
 	topicLabel: string;
 	article?: string; // 文章路徑
@@ -147,6 +215,7 @@ export function convHeader(m: ConvMeta): string {
 		"---",
 		`user: ${m.user}`,
 		`level: ${m.level}`,
+		...(m.lang && m.lang !== "en" ? [`lang: ${m.lang}`] : []),
 		`topic: ${m.topic}`,
 		`topicLabel: ${JSON.stringify(m.topicLabel)}`,
 		...(m.article ? [`article: ${JSON.stringify(m.article)}`] : []),
@@ -154,7 +223,7 @@ export function convHeader(m: ConvMeta): string {
 		`started: ${m.started}`,
 		"---",
 		"",
-		`# 英文對話：${m.topicLabel}`,
+		`# ${LANG[langOf(m.lang)].name}對話：${m.topicLabel}`,
 		"",
 	].join("\n");
 }
@@ -173,9 +242,11 @@ export function convBlock(m: ConvMessage): string {
 		lines.push(`**You${m.voice ? " 🎤" : ""}:** ${m.text}`, "");
 	} else {
 		const r = parseReply(m.text);
-		if (r.correction) lines.push(`> [!warning] 修正`, `> ${r.correction.original} → **${r.correction.corrected}**`, `> ${r.correction.explanation}`, "");
-		for (const h of r.howto) lines.push(`> [!tip] 怎麼說：${h.zh}`, `> **${h.en}**${h.alt ? `／${h.alt}` : ""}`, ...(h.note ? [`> ${h.note}`] : []), "");
-		lines.push(`**AI:** ${r.reply}`, ...(r.replyZh ? [`*${r.replyZh}*`] : []), "");
+		if (r.correction)
+			lines.push(`> [!warning] 修正`, `> ${r.correction.original} → **${r.correction.corrected}**`, ...(r.correction.romaji ? [`> ${r.correction.reading ?? ""}（${r.correction.romaji}）`] : []), `> ${r.correction.explanation}`, "");
+		for (const h of r.howto)
+			lines.push(`> [!tip] 怎麼說：${h.zh}`, `> **${h.en}**${h.alt ? `／${h.alt}` : ""}`, ...(h.romaji ? [`> ${h.reading ?? ""}（${h.romaji}）`] : []), ...(h.note ? [`> ${h.note}`] : []), "");
+		lines.push(`**AI:** ${r.reply}`, ...(r.replyRomaji ? [`${r.replyReading ?? ""}（${r.replyRomaji}）`] : []), ...(r.replyZh ? [`*${r.replyZh}*`] : []), "");
 	}
 	return lines.join("\n") + "\n";
 }
@@ -225,6 +296,7 @@ export interface PhraseLog {
 	source?: PhraseSource;
 	original?: string;
 	conv?: string;
+	lang?: Lang; // 沒有＝英文
 }
 
 export interface PhraseItem {
@@ -237,6 +309,7 @@ export interface PhraseItem {
 	original?: string;
 	addedAt: string;
 	bank?: string; // 題庫來的句子：來源題庫
+	lang: Lang;
 }
 
 /** 句子本的來源：對話糾正、問怎麼說、錯誤分析練習句、答錯的克漏字／翻譯／聽力。 */
@@ -258,27 +331,32 @@ export interface FailedSentence {
 	note?: string;
 	source: "cloze" | "translate" | "listening";
 	bank: string;
+	lang: Lang;
 }
 
 /** 從題目與聽力句子建立「答錯就進句子本」的對照表。 */
-export function failedSentenceMap(items: { q: Question; bank: { sourceId: string } }[], listening: { id: string; text: string; zh?: string; bank: string }[] = []): Map<string, FailedSentence> {
+export function failedSentenceMap(
+	items: { q: Question; bank: { sourceId: string; lang?: Lang } }[],
+	listening: { id: string; text: string; zh?: string; bank: string; lang?: Lang }[] = [],
+): Map<string, FailedSentence> {
 	const m = new Map<string, FailedSentence>();
 	for (const { q, bank } of items) {
 		if (q.type === "cloze") {
 			const c = q as ChoiceQ;
 			const ans = c.options[c.answer];
 			if (!ans || !c.prompt.includes("____")) continue;
-			m.set(q.id, { en: c.prompt.replace("____", ans).replace(/\s+/g, " ").trim(), zh: c.promptZh ?? "", note: c.explanation, source: "cloze", bank: bank.sourceId });
+			m.set(q.id, { en: c.prompt.replace("____", ans).replace(/\s+/g, " ").trim(), zh: c.promptZh ?? "", note: c.explanation, source: "cloze", bank: bank.sourceId, lang: langOf(bank.lang) });
 		} else if (q.type === "translate") {
 			const t = q as TranslateQ;
-			if (t.reference && t.prompt) m.set(q.id, { en: t.reference, zh: t.prompt, note: t.explanation, source: "translate", bank: bank.sourceId });
+			if (t.reference && t.prompt) m.set(q.id, { en: t.reference, zh: t.prompt, note: t.explanation, source: "translate", bank: bank.sourceId, lang: langOf(bank.lang) });
 		}
 	}
-	for (const d of listening) m.set(d.id, { en: d.text, zh: d.zh ?? "", source: "listening", bank: d.bank });
+	for (const d of listening) m.set(d.id, { en: d.text, zh: d.zh ?? "", source: "listening", bank: d.bank, lang: langOf(d.lang) });
 	return m;
 }
 
-export function phraseKey(en: string): string {
+export function phraseKey(en: string, lang: Lang = "en"): string {
+	if (lang !== "en") return audioKey(normSentence(en, lang), lang);
 	return audioKey(en.toLowerCase().replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim());
 }
 
@@ -290,23 +368,27 @@ export function phraseQid(key: string): string {
  * 句子本：phrase-add／phrase-remove，加上答錯（或按「我不知道」）的克漏字、翻譯、聽力句子。
  * 依時間重播：移除後如果又答錯，會再出現。
  */
-export function buildPhraseBook(logs: { type: string; ts: string; id: string }[], failed: Map<string, FailedSentence> = new Map()): PhraseItem[] {
+export function buildPhraseBook(logs: { type: string; ts: string; id: string }[], failed: Map<string, FailedSentence> = new Map(), lang: Lang = "en"): PhraseItem[] {
 	const seen = new Set<string>();
 	type Ev = PhraseLog | { type: "answer" | "grade"; id: string; ts: string; qid: string; correct?: boolean; relearn?: boolean };
 	const list = (logs as Ev[])
 		.filter((e) => e.id && !seen.has(e.id) && !!seen.add(e.id))
-		.filter((e) => e.type === "phrase-add" || e.type === "phrase-remove" || ((e.type === "answer" || e.type === "grade") && e.correct === false && !("relearn" in e && e.relearn) && failed.has(e.qid)))
+		.filter(
+			(e) =>
+				((e.type === "phrase-add" || e.type === "phrase-remove") && langOf((e as PhraseLog).lang) === lang) ||
+				((e.type === "answer" || e.type === "grade") && e.correct === false && !("relearn" in e && e.relearn) && failed.get(e.qid)?.lang === lang),
+		)
 		.sort((a, b) => (a.ts < b.ts ? -1 : 1));
 	const items = new Map<string, PhraseItem>();
 	for (const e of list) {
 		if (e.type === "phrase-remove") items.delete(e.key);
 		else if (e.type === "phrase-add") {
 			if (e.zh && e.en)
-				items.set(e.key, { key: e.key, zh: e.zh, en: e.en, alt: e.alt, note: e.note, source: e.source ?? "howto", original: e.original, addedAt: items.get(e.key)?.addedAt ?? e.ts });
+				items.set(e.key, { key: e.key, zh: e.zh, en: e.en, alt: e.alt, note: e.note, source: e.source ?? "howto", original: e.original, addedAt: items.get(e.key)?.addedAt ?? e.ts, lang });
 		} else {
 			const f = failed.get((e as { qid: string }).qid)!;
-			const key = phraseKey(f.en);
-			if (!items.has(key)) items.set(key, { key, zh: f.zh, en: f.en, note: f.note, source: f.source, addedAt: e.ts, bank: f.bank });
+			const key = phraseKey(f.en, lang);
+			if (!items.has(key)) items.set(key, { key, zh: f.zh, en: f.en, note: f.note, source: f.source, addedAt: e.ts, bank: f.bank, lang });
 		}
 	}
 	return [...items.values()].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1));

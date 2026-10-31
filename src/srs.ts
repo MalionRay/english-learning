@@ -9,6 +9,7 @@
 // - 作答前看了中文翻譯（hint）而答對：階梯不動，隔天再出
 // - 翻譯題在批改前（pending）視為隔天到期；批改結果是另一筆 grade log，對應 answerId
 import type { QType } from "./generate";
+import type { Lang } from "./lang";
 
 export const DAY = 24 * 3600 * 1000;
 /** 到期時間提前 4 小時，讓「明天差不多同一時間」練習時一定會出現。 */
@@ -26,7 +27,7 @@ export interface AnswerLog {
 	type: "answer";
 	qid: string;
 	bank: string; // sourceId
-	qtype: QType | "word" | "dictation" | "listening" | "phrase";
+	qtype: QType | "word" | "dictation" | "listening" | "phrase" | "kana";
 	session: string;
 	correct?: boolean; // 選擇題；翻譯題批改後才有
 	choice?: number;
@@ -39,7 +40,8 @@ export interface AnswerLog {
 	hint?: boolean; // 作答前看了中文翻譯：答對也只算練習，不升級
 	dontKnow?: boolean; // 按了「我不知道」（視為答錯）
 	marked?: boolean;
-	via?: "chat"; // 在英文對話中用對了（算一次複習）
+	via?: "chat"; // 在對話中用對了（算一次複習）
+	lang?: Lang; // 沒有＝英文（或依題庫）
 }
 
 export interface GradeLog {

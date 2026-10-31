@@ -83,7 +83,7 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 	const removed: string[] = [];
 	const plugin: any = {
 		app: makeApp().app,
-		user: "ray",
+		user: "ray", lang: "en",
 		users: () => [
 			{ name: "ray", level: "adult", created: "" },
 			{ name: "amy", level: "kid", created: "" },

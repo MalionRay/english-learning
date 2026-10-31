@@ -4,6 +4,7 @@
 // 這個檔案不碰 Vault，方便測試。
 import type { Level } from "./generate";
 import { ConvMessage, parseReply } from "./chat";
+import { Lang, wordsOf } from "./lang";
 
 export type ChatLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -16,7 +17,9 @@ export const LEVEL_LABEL: Record<ChatLevel, string> = {
 };
 
 /** 沒有紀錄時的起點。 */
-export function defaultChatLevel(level: Level): ChatLevel {
+export function defaultChatLevel(level: Level, lang: Lang = "en"): ChatLevel {
+	if (lang === "ja") return 1; // 日文從零開始
+	if (lang === "es") return 2;
 	return level === "kid" ? 2 : 3;
 }
 
@@ -25,7 +28,8 @@ export function maxChatLevel(level: Level): ChatLevel {
 	return level === "kid" ? 4 : 5;
 }
 
-function words(text: string): string[] {
+function words(text: string, lang: Lang = "en"): string[] {
+	if (lang !== "en") return wordsOf(text, lang);
 	return text.toLowerCase().replace(/[’‘]/g, "'").match(/[a-z][a-z'-]*/g) ?? [];
 }
 
@@ -35,9 +39,9 @@ function cjkCount(text: string): number {
 }
 
 /** 兩句英文差多少（以字為單位的編輯距離 ÷ 較長那句的字數，0～1）。 */
-export function editRatio(a: string, b: string): number {
-	const x = words(a);
-	const y = words(b);
+export function editRatio(a: string, b: string, lang: Lang = "en"): number {
+	const x = words(a, lang);
+	const y = words(b, lang);
 	const n = Math.max(x.length, y.length);
 	if (!n) return 0;
 	let prev = Array.from({ length: y.length + 1 }, (_, j) => j);
@@ -56,14 +60,15 @@ export function editRatio(a: string, b: string): number {
  * - 英文夾中文：最多 0.5
  * - 沒錯：1；但只有 1～2 個字的回答看不出程度，算 0.6
  */
-export function messageScore(learner: string, reply: string | null): number {
-	const en = words(learner);
-	const zh = cjkCount(learner);
-	if (!en.length || zh > en.length * 2) return 0.15;
+export function messageScore(learner: string, reply: string | null, lang: Lang = "en"): number {
+	const en = words(learner, lang);
+	// 日文也用漢字：沒有假名、沒有羅馬拼音、只有漢字才算「全中文」
+	const zh = lang === "ja" ? (/[\u3040-\u30ff]|[A-Za-z]/.test(learner) ? 0 : cjkCount(learner)) : cjkCount(learner);
+	if (!en.length || (lang === "ja" ? zh > 0 : zh > en.length * 2)) return 0.15;
 	let s = 1;
 	const r = reply ? parseReply(reply) : null;
 	if (r?.correction) {
-		const ratio = editRatio(r.correction.original, r.correction.corrected);
+		const ratio = editRatio(r.correction.original, r.correction.corrected, lang);
 		s = ratio < 0.15 ? 0.75 : Math.max(0.1, Math.min(0.75, 1 - ratio * 1.5));
 	} else if (en.length <= 2) s = 0.6;
 	if (zh) s = Math.min(s, 0.5);
@@ -78,7 +83,7 @@ export interface LevelEstimate {
 }
 
 /** 最近幾則訊息的權重較高；樣本少時往起點靠（不會一兩句就跳很多級）。 */
-export function estimateChatLevel(messages: ConvMessage[], level: Level, recent = 10): LevelEstimate {
+export function estimateChatLevel(messages: ConvMessage[], level: Level, recent = 10, lang: Lang = "en"): LevelEstimate {
 	const pairs: { score: number; n: number }[] = [];
 	for (let i = 0; i < messages.length; i++) {
 		const m = messages[i];
@@ -86,10 +91,10 @@ export function estimateChatLevel(messages: ConvMessage[], level: Level, recent 
 		// 還沒有 AI 回覆的訊息（剛送出）不算：還不知道有沒有被糾正
 		const next = messages[i + 1];
 		if (next?.role !== "model") continue;
-		pairs.push({ score: messageScore(m.text, next.text), n: words(m.text).length });
+		pairs.push({ score: messageScore(m.text, next.text, lang), n: words(m.text, lang).length });
 	}
 	const use = pairs.slice(-recent);
-	const start = defaultChatLevel(level);
+	const start = defaultChatLevel(level, lang);
 	const prior = (start - 0.5) / 5; // 起點等級的中間值
 	const PRIOR_WEIGHT = 3;
 	let sum = prior * PRIOR_WEIGHT;
@@ -117,11 +122,28 @@ const STYLE: Record<ChatLevel, string> = {
 	5: "The learner is doing well. Talk exactly as you would with a native-speaker friend: natural rhythm, everyday idioms and expressions when they fit naturally, varied sentence length.",
 };
 
+const STYLE_ES: Record<ChatLevel, string> = {
+	1: "The learner is struggling. Use very short, simple Spanish sentences (about 4–7 words), only the most common words, mostly present tense. One idea per reply, at most 2 sentences. If you ask something, make it easy to answer (sí/no or \"¿A o B?\"). No idioms or slang.",
+	2: "Use short, simple Spanish sentences (up to about 10 words), common everyday words, present and simple past (pretérito). 1–2 sentences. Avoid idioms and slang.",
+	3: "Use clear everyday Mexican Spanish, 1–3 sentences, mostly common words. Common expressions are fine; avoid slang that is hard to guess.",
+	4: "Talk naturally, like chatting with a Mexican friend: everyday expressions where they fit, natural sentence length.",
+	5: "The learner is doing well. Talk exactly as you would with a native-speaker friend from Mexico: natural rhythm, everyday Mexican expressions when they fit naturally.",
+};
+
+const STYLE_JA: Record<ChatLevel, string> = {
+	1: "The learner is an absolute beginner. Use very short, simple Japanese (about 8–15 characters per sentence), polite です／ます form, only the most basic words, mostly hiragana. One idea per reply, at most 2 sentences. If you ask something, make it answerable with はい／いいえ or one word.",
+	2: "Use short, simple polite Japanese (です／ます), basic N5 vocabulary, 1–2 sentences. Ask simple, concrete questions.",
+	3: "Use clear everyday polite Japanese, N5–N4 vocabulary, 1–3 sentences.",
+	4: "Talk naturally and kindly, like a friend: you may mix casual forms where natural, everyday expressions, natural sentence length.",
+	5: "The learner is doing well. Talk as you would with a Japanese friend: natural casual Japanese and everyday expressions when they fit.",
+};
+
 /** 加在系統提示後面的程度說明。 */
-export function levelPrompt(est: LevelEstimate, level: Level): string {
+export function levelPrompt(est: LevelEstimate, level: Level, lang: Lang = "en"): string {
+	const style = lang === "es" ? STYLE_ES : lang === "ja" ? STYLE_JA : STYLE;
 	return `
 
 Learner's current level in this chat: ${est.level} of ${maxChatLevel(level)} (measured from their recent messages; this overrides the CEFR guess above).
-${STYLE[est.level]}${level === "kid" ? " Keep it suitable for a child." : ""}
+${style[est.level]}${level === "kid" ? " Keep it suitable for a child." : ""}
 Natural is not the same as difficult: never pick rare words or complex sentence structures just to make it harder. Adjust gradually — do not change style abruptly from one reply to the next.`;
 }

@@ -1,4 +1,4 @@
-// 英文對話畫面
+// 對話畫面（英文、西班牙文、日文）
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
@@ -21,7 +21,9 @@ import {
 	phraseKey,
 } from "./chat";
 
-import { VOICE_TURN, parseHeard } from "./chat";
+import { parseHeard, voiceTurn } from "./chat";
+import { LANG, Lang, langOf, personaName, tokenize } from "./lang";
+import { langSelect } from "./langview";
 import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
 import { primeSpeech, speak, stopSpeaking, voicePicker } from "./tts";
 import { stopAudio, unlockAudio } from "./pronounce";
@@ -72,7 +74,7 @@ export class ChatView extends ItemView {
 		return CHAT_VIEW;
 	}
 	getDisplayText() {
-		return "英文對話";
+		return "外語對話";
 	}
 	getIcon() {
 		return "messages-square";
@@ -89,6 +91,11 @@ export class ChatView extends ItemView {
 		return this.plugin.levelOf(this.plugin.user);
 	}
 
+	/** 這次對話的語言：續聊用對話檔記的語言，新對話用目前選的語言。 */
+	private clang(): Lang {
+		return this.meta ? langOf(this.meta.lang) : this.plugin.lang;
+	}
+
 	private root(): HTMLElement {
 		const el = this.contentEl;
 		el.empty();
@@ -102,10 +109,11 @@ export class ChatView extends ItemView {
 	private drawStart() {
 		const p = this.plugin;
 		const el = this.root();
-		el.createEl("h3", { text: "英文對話" });
+		const L = LANG[p.lang].name;
+		el.createEl("h3", { text: `${L}對話` });
 		el.createDiv({
 			cls: "el-muted",
-			text: "用英文聊天；說錯會即時糾正。不會說的可以直接打中文問「…英文怎麼說」。糾正過的句子和問過的說法會記進「句子本」，之後在練習裡複習。到期的生字和句子會在聊天中自然出現，你用對了就算複習。",
+			text: `和 ${personaName(p.lang, this.level())} 用${L}聊天；說錯會即時糾正。不會說的可以直接打中文問「…${L}怎麼說」。${p.lang === "ja" ? "可以打假名、漢字或羅馬拼音；AI 的回覆下面會有平假名和羅馬拼音。" : ""}糾正過的句子和問過的說法會記進「句子本」，之後在練習裡複習。到期的生字和句子會在聊天中自然出現，你用對了就算複習。`,
 		});
 		const prefs = ((this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, { topic?: string; article?: string; review?: boolean }>)[p.user] ?? {};
 
@@ -118,6 +126,7 @@ export class ChatView extends ItemView {
 				p.user = sel.value;
 				this.drawStart();
 			};
+			langSelect(r, p);
 		});
 		let topicId = prefs.topic ?? (p.levelOf(p.user) === "kid" ? "school" : "free");
 		let articlePath = prefs.article ?? "";
@@ -158,7 +167,7 @@ export class ChatView extends ItemView {
 		});
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "系統語音" });
-			voicePicker(this.app, r);
+			voicePicker(this.app, r, undefined, p.lang);
 			r.createSpan({ cls: "el-muted", text: "自然語音用完或選「系統語音」時用這個聲音" });
 		});
 		let review = prefs.review !== false;
@@ -191,7 +200,7 @@ export class ChatView extends ItemView {
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(CONV_DIR + "/"))
 			.map((f) => ({ f, fm: this.app.metadataCache.getFileCache(f)?.frontmatter ?? {} }))
-			.filter((x) => x.fm.user === p.user)
+			.filter((x) => x.fm.user === p.user && langOf(x.fm.lang) === p.lang)
 			.sort((a, b) => (a.f.basename < b.f.basename ? 1 : -1))
 			.slice(0, 20);
 		if (convs.length) {
@@ -228,7 +237,7 @@ export class ChatView extends ItemView {
 		this.doneTargets = new Set();
 		if (!review) return;
 		try {
-			const d = await loadPractice(this.app, this.plugin.user, this.level());
+			const d = await loadPractice(this.app, this.plugin.user, this.level(), this.clang());
 			for (const e of d.logs) if (e.type === "answer" && (e as AnswerLog).via === "chat" && (e as AnswerLog).session === convPath) this.doneTargets.add((e as AnswerLog).qid);
 			this.targets = pickTargets(d.words, d.phrases, d.states);
 		} catch (e) {
@@ -244,7 +253,7 @@ export class ChatView extends ItemView {
 				.getMarkdownFiles()
 				.filter((f) => f.path.startsWith(CONV_DIR + "/") && f.path !== exclude)
 				.map((f) => ({ f, fm: this.app.metadataCache.getFileCache(f)?.frontmatter ?? {} }))
-				.filter((x) => x.fm.user === this.plugin.user)
+				.filter((x) => x.fm.user === this.plugin.user && langOf(x.fm.lang) === this.clang())
 				.sort((a, b) => (String(a.fm.started ?? a.f.basename) < String(b.fm.started ?? b.f.basename) ? 1 : -1))
 				.slice(0, 3)
 				.reverse();
@@ -256,7 +265,7 @@ export class ChatView extends ItemView {
 	}
 
 	private levelEstimate() {
-		return estimateChatLevel([...this.pastMessages, ...this.messages], this.meta?.level ?? this.level());
+		return estimateChatLevel([...this.pastMessages, ...this.messages], this.meta?.level ?? this.level(), 10, this.clang());
 	}
 
 	private drawLevel() {
@@ -280,7 +289,8 @@ export class ChatView extends ItemView {
 		this.topic = topic;
 		this.article = await this.loadArticle(articlePath);
 		const now = new Date();
-		this.meta = { user: p.user, level: this.level(), topic: topic.id, topicLabel: topic.label, article: articlePath, device: p.deviceId, started: now.toISOString() };
+		const lang = p.lang;
+		this.meta = { user: p.user, level: this.level(), ...(lang !== "en" ? { lang } : {}), topic: topic.id, topicLabel: topic.label, article: articlePath, device: p.deviceId, started: now.toISOString() };
 		// conversations/<日期>-<裝置>-<序號>.md：由開始的裝置獨佔寫入
 		const base = `${localDate(now)}-${p.deviceId}`;
 		let n = 1;
@@ -299,7 +309,7 @@ export class ChatView extends ItemView {
 	}
 
 	private async resume(f: TFile, fm: ConvMeta, review = true) {
-		this.meta = { ...fm, level: fm.level === "kid" ? "kid" : "adult" };
+		this.meta = { ...fm, level: fm.level === "kid" ? "kid" : "adult", lang: langOf(fm.lang) };
 		this.topic = TOPICS.find((t) => t.id === fm.topic) ?? TOPICS[0];
 		this.article = await this.loadArticle(fm.article);
 		this.file = f;
@@ -341,7 +351,8 @@ export class ChatView extends ItemView {
 
 		this.listEl = el.createDiv({ cls: "el-chat-list" });
 		const bar = el.createDiv({ cls: "el-chat-input" });
-		const ta = bar.createEl("textarea", { attr: { rows: "2", placeholder: "用英文說，或打中文問「…怎麼說」" } });
+		const L = LANG[this.clang()].name;
+		const ta = bar.createEl("textarea", { attr: { rows: "2", placeholder: this.clang() === "ja" ? "用日文說（假名、漢字或羅馬拼音），或打中文問「…怎麼說」" : `用${L}說，或打中文問「…怎麼說」` } });
 		const mic = bar.createEl("button", { text: "🎤", cls: "el-mic", attr: { "aria-label": "用說的" } });
 		const send = bar.createEl("button", { text: "送出", cls: "mod-cta" });
 		send.onclick = () => {
@@ -392,10 +403,10 @@ export class ChatView extends ItemView {
 			ta.disabled = send.disabled = true;
 			const t0 = Date.now();
 			recInfo.empty();
-			const label = recInfo.createSpan({ text: "錄音中… 0 秒（可以英文夾中文；最長 60 秒） " });
+			const label = recInfo.createSpan({ text: `錄音中… 0 秒（可以${L}夾中文；最長 60 秒） ` });
 			const x = recInfo.createEl("a", { text: "取消" });
 			x.onclick = () => void finish(true);
-			tick = setInterval(() => label.setText(`錄音中… ${Math.round((Date.now() - t0) / 1000)} 秒（可以英文夾中文；最長 60 秒） `), 1000);
+			tick = setInterval(() => label.setText(`錄音中… ${Math.round((Date.now() - t0) / 1000)} 秒（可以${L}夾中文；最長 60 秒） `), 1000);
 		};
 		ta.addEventListener("keydown", (e) => {
 			// 電腦上 Enter 送出、Shift+Enter 換行（iPad 的螢幕鍵盤用送出鈕）
@@ -424,13 +435,21 @@ export class ChatView extends ItemView {
 	private async recordUsed(learnerText: string, rawReply: string, corrected: boolean) {
 		const active = this.activeTargets();
 		if (!active.length || !this.file) return;
-		const used = usedTargets(active, learnerText, parseLearnerUsed(rawReply), corrected);
+		const used = usedTargets(active, learnerText, parseLearnerUsed(rawReply), corrected, this.clang());
 		if (!used.length) return;
 		const p = this.plugin;
 		for (const t of used) {
 			this.doneTargets.add(t.qid);
 			await p.appendLog(
-				p.makeEntry("answer", { qid: t.qid, bank: "words", qtype: t.kind === "word" ? "word" : "phrase", session: this.file.path, correct: true, via: "chat" }),
+				p.makeEntry("answer", {
+					qid: t.qid,
+					bank: "words",
+					qtype: t.kind === "word" ? "word" : "phrase",
+					session: this.file.path,
+					correct: true,
+					via: "chat",
+					...(this.clang() !== "en" ? { lang: this.clang() } : {}),
+				}),
 			);
 		}
 		this.listEl?.createDiv({ cls: "el-chat-reviewed", text: `✓ 複習到：${used.map((t) => (t.kind === "word" ? t.en : t.zh || t.en)).join("、")}` });
@@ -459,9 +478,9 @@ export class ChatView extends ItemView {
 		const audio = { mimeType: "audio/wav", data: arrayBufferToBase64(wav) };
 		const last = turns[turns.length - 1];
 		if (last?.role === "user") {
-			last.text += `\n${VOICE_TURN}`;
+			last.text += `\n${voiceTurn(this.clang())}`;
 			last.media = [...(last.media ?? []), audio];
-		} else turns.push({ role: "user", text: VOICE_TURN, media: [audio] });
+		} else turns.push({ role: "user", text: voiceTurn(this.clang()), media: [audio] });
 		await this.ask(turns, null, bubble, Math.round((wav.byteLength - 44) / 32000));
 	}
 
@@ -481,9 +500,9 @@ export class ChatView extends ItemView {
 		try {
 			const res = await p.fastBackend().chat(turns, {
 				system:
-					chatSystemPrompt(this.meta.level, this.topic, this.article || undefined) +
-					levelPrompt(this.levelEstimate(), this.meta.level) +
-					targetsPrompt(this.activeTargets(), this.meta.level),
+					chatSystemPrompt(this.meta.level, this.topic, this.article || undefined, this.clang()) +
+					levelPrompt(this.levelEstimate(), this.meta.level, this.clang()) +
+					targetsPrompt(this.activeTargets(), this.meta.level, this.clang()),
 				json: true,
 				maxOutputTokens: 1024,
 				temperature: 0.9,
@@ -515,7 +534,7 @@ export class ChatView extends ItemView {
 			// 背景先把回覆裡的字查好中文，點字就會立刻出現
 			const forZh = [reply.reply, reply.correction?.corrected ?? "", ...reply.howto.map((h) => h.en)].join(" ");
 			window.setTimeout(() => {
-				prefetchMeanings(this.app, p.fastBackend(), forZh).catch((e) => p.debug(`prefetch meanings failed: ${(e as Error)?.message ?? e}`));
+				prefetchMeanings(this.app, p.fastBackend(), forZh, this.clang()).catch((e) => p.debug(`prefetch meanings failed: ${(e as Error)?.message ?? e}`));
 			}, 1500);
 			await p.appendText(file, convBlock(mm));
 			await this.savePhrases(reply);
@@ -563,13 +582,14 @@ export class ChatView extends ItemView {
 	/** 唸一句英文（自動朗讀與 🔊 共用）。手動按 🔊 時，即使關了自動朗讀也會用系統語音唸。 */
 	private speakText(text: string, manual = false) {
 		const v = this.voice();
-		const system = () => speak(this.app, text).catch((e) => this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`));
+		const lang = this.clang();
+		const system = () => speak(this.app, text, undefined, lang).catch((e) => this.plugin.debug(`chat speak failed: ${(e as Error)?.message ?? e}`));
 		if (v === "natural") {
 			const gen = this.speechGen;
 			const stopped = () => this.speechGen !== gen;
 			// 第一句先產生先播；拿不到自然語音（額度、網路）就改用系統語音
 			this.plugin.pronouncer
-				.speakNatural(text, stopped)
+				.speakNatural(text, stopped, lang)
 				.then((ok) => {
 					if (!ok && !stopped()) void system();
 				})
@@ -590,11 +610,13 @@ export class ChatView extends ItemView {
 	private async savePhrases(r: ChatReply) {
 		const p = this.plugin;
 		const conv = this.file?.path;
+		const lang = this.clang();
+		const tag = lang !== "en" ? { lang } : {};
 		if (r.correction && r.correction.zh) {
 			const c = r.correction;
-			await p.addPhrase({ key: phraseKey(c.corrected), zh: c.zh, en: c.corrected, note: c.explanation, source: "correction", original: c.original, conv });
+			await p.addPhrase({ key: phraseKey(c.corrected, lang), zh: c.zh, en: c.corrected, note: c.explanation, source: "correction", original: c.original, conv, ...tag });
 		}
-		for (const h of r.howto) await p.addPhrase({ key: phraseKey(h.en), zh: h.zh, en: h.en, alt: h.alt, note: h.note, source: "howto", conv });
+		for (const h of r.howto) await p.addPhrase({ key: phraseKey(h.en, lang), zh: h.zh, en: h.en, alt: h.alt, note: h.note, source: "howto", conv, ...tag });
 	}
 
 	private renderMessage(m: ConvMessage, reply?: ChatReply) {
@@ -608,39 +630,43 @@ export class ChatView extends ItemView {
 				const box = list.createDiv({ cls: "el-chat-box el-chat-fix" });
 				box.createDiv({ cls: "el-chat-box-title", text: "✏️ 修正（已記入句子本）" });
 				box.createDiv({ cls: "el-d-typed", text: r.correction.original });
-				this.englishLine(box, r.correction.corrected);
+				this.englishLine(box, r.correction.corrected, undefined, false, r.correction);
 				if (r.correction.explanation) box.createDiv({ cls: "el-muted", text: r.correction.explanation });
 			}
 			for (const h of r.howto) {
 				const box = list.createDiv({ cls: "el-chat-box el-chat-tip" });
 				box.createDiv({ cls: "el-chat-box-title", text: `💡 怎麼說：${h.zh}（已記入句子本）` });
-				this.englishLine(box, h.en);
+				this.englishLine(box, h.en, undefined, false, h);
 				if (h.alt) this.englishLine(box, h.alt);
 				if (h.note) box.createDiv({ cls: "el-muted", text: h.note });
 			}
 			const b = list.createDiv({ cls: "el-bubble el-bubble-ai" });
-			this.englishLine(b, r.reply, r.replyZh, true);
+			this.englishLine(b, r.reply, r.replyZh, true, { reading: r.replyReading, romaji: r.replyRomaji });
 		}
 		list.lastElementChild?.scrollIntoView({ block: "end" });
 	}
 
 	/** 英文：逐字可點（唸、看中文、加入生字本）、🔊 唸整句、「中」看翻譯。 */
-	private englishLine(parent: HTMLElement, text: string, zh?: string, markTargets = false) {
+	private englishLine(parent: HTMLElement, text: string, zh?: string, markTargets = false, pron?: { reading?: string; romaji?: string }) {
+		const lang = this.clang();
 		const targetWords = markTargets ? this.activeTargets().filter((t) => t.kind === "word") : [];
 		const wrap = parent.createDiv({ cls: "el-line-wrap" });
 		const line = wrap.createDiv({ cls: "el-line" });
 		const words = line.createSpan({ cls: "el-words" });
-		for (const tok of text.split(/(\s+)/)) {
-			const m = tok.match(/^([^A-Za-z]*)([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])(.*)$/);
-			if (!m) {
-				words.appendChild(document.createTextNode(tok));
+		for (const tok of tokenize(text, lang)) {
+			if (!tok.word) {
+				words.appendChild(document.createTextNode(tok.text));
 				continue;
 			}
-			if (m[1]) words.appendChild(document.createTextNode(m[1]));
-			const w = words.createSpan({ cls: "el-w", text: m[2] });
-			if (targetWords.some((t) => !t.en.includes(" ") && mentionsWord(m[2], t))) w.addClass("el-target-word"); // AI 用到了複習的字
-			w.onclick = (e) => this.wordMenu(e, m[2], text);
-			if (m[3]) words.appendChild(document.createTextNode(m[3]));
+			const w = words.createSpan({ cls: "el-w", text: tok.text });
+			if (targetWords.some((t) => !t.en.includes(" ") && mentionsWord(tok.text, t, lang))) w.addClass("el-target-word"); // AI 用到了複習的字
+			w.onclick = (e) => this.wordMenu(e, tok.text, text);
+		}
+		// 日文：AI 一起回傳的平假名與羅馬拼音（從零開始的學習者看不懂漢字）
+		if (lang === "ja" && (pron?.reading || pron?.romaji)) {
+			const box = wrap.createDiv({ cls: "el-reading" });
+			if (pron.reading && pron.reading !== text) box.createDiv({ cls: "el-kana", text: pron.reading });
+			if (pron.romaji) box.createDiv({ cls: "el-romaji", text: pron.romaji });
 		}
 		const say = line.createEl("button", { cls: "el-zh-btn", text: "🔊" });
 		say.onclick = (e) => {
@@ -659,10 +685,10 @@ export class ChatView extends ItemView {
 				return;
 			}
 			box.style.display = "";
-			box.setText(zh ?? cachedZh(this.app, text) ?? "翻譯中…");
-			if (!zh && !cachedZh(this.app, text)) {
+			box.setText(zh ?? cachedZh(this.app, text, lang) ?? "翻譯中…");
+			if (!zh && !cachedZh(this.app, text, lang)) {
 				try {
-					box.setText((await translateMany(this.app, this.plugin.fastBackend(), [text]))[0]);
+					box.setText((await translateMany(this.app, this.plugin.fastBackend(), [text], lang))[0]);
 				} catch (err) {
 					box.setText(`無法翻譯：${(err as Error)?.message ?? err}`);
 				}
@@ -672,11 +698,12 @@ export class ChatView extends ItemView {
 
 	private wordMenu(evt: MouseEvent, word: string, sentence: string) {
 		const menu = new Menu();
-		menu.addItem((i) => i.setTitle(`🔊 唸 ${word}`).onClick(() => this.plugin.say(word)));
+		const lang = this.clang();
+		menu.addItem((i) => i.setTitle(`🔊 唸 ${word}`).onClick(() => this.plugin.say(word, undefined, { lang })));
 		menu.addItem((i) =>
-			i.setTitle("看中文意思").onClick(() => inlineMeaning(this.app, () => this.plugin.fastBackend(), word, evt.target instanceof HTMLElement ? evt.target : null)),
+			i.setTitle("看中文意思").onClick(() => inlineMeaning(this.app, () => this.plugin.fastBackend(), word, evt.target instanceof HTMLElement ? evt.target : null, lang)),
 		);
-		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence)));
+		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence, undefined, lang)));
 		menu.showAtMouseEvent(evt);
 	}
 

@@ -7,6 +7,21 @@ import { BOOK_STATUS_LABEL, BookStatus, bookStatus, computeStats, splitByStatus,
 import { PHRASE_SOURCE_LABEL, phraseQid } from "./chat";
 import type { AnswerLog, GradeLog } from "./srs";
 import { PatternModal } from "./patternview";
+import { langSelect } from "./langview";
+import { LANG, Lang, langOf } from "./lang";
+import type { Bank } from "./generate";
+
+/** 一筆作答屬於哪個語言：紀錄上有寫就用；沒寫就看題庫；都沒有＝英文（舊紀錄）。 */
+export function answerLang(e: { lang?: string; bank?: string }, bankLang: Map<string, Lang>): Lang {
+	if (e.lang) return langOf(e.lang);
+	return (e.bank && bankLang.get(e.bank)) || "en";
+}
+
+export function filterAnswersByLang<T extends { type: string; id: string; lang?: string; bank?: string; answerId?: string }>(entries: T[], banks: Bank[], lang: Lang): T[] {
+	const bankLang = new Map(banks.map((b) => [b.sourceId, langOf(b.lang)] as [string, Lang]));
+	const answerOf = new Map(entries.filter((e) => e.type === "answer").map((e) => [e.id, answerLang(e, bankLang)]));
+	return entries.filter((e) => (e.type === "grade" ? (answerOf.get(e.answerId ?? "") ?? "en") === lang : answerLang(e, bankLang) === lang));
+}
 
 export const WORDS_VIEW = "english-learning-words";
 export const STATS_VIEW = "english-learning-stats";
@@ -22,6 +37,7 @@ function header(el: HTMLElement, title: string, plugin: EnglishLearningPlugin, o
 			plugin.user = sel.value;
 			onChange();
 		};
+		langSelect(r, plugin);
 	});
 }
 
@@ -87,12 +103,13 @@ export class WordsView extends ItemView {
 		el.addClass("el-verify");
 		el.addClass("el-practice");
 		header(el, "生字本", p, () => this.render());
-		const d = await loadPractice(this.app, p.user, p.levelOf(p.user));
+		const lang = p.lang;
+		const d = await loadPractice(this.app, p.user, p.levelOf(p.user), lang);
 		const words = d.words;
 
 		el.createDiv({
 			cls: "el-muted",
-			text: `共 ${words.length} 個字。來源：文章標記的生字、答錯過的字、練習時點字加入的字。到「練習 → 生字複習」可以複習。`,
+			text: `${LANG[lang].name}：共 ${words.length} 個字。來源：文章標記的生字、答錯過的字、練習時點字加入的字。到「練習 → 生字複習」可以複習。`,
 		});
 		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: "搜尋英文或中文" } });
 		search.value = this.filter;
@@ -100,14 +117,15 @@ export class WordsView extends ItemView {
 		const draw = () => {
 			list.empty();
 			const f = this.filter.trim().toLowerCase();
-			const shown = words.filter((w) => !f || w.key.includes(f) || [...w.forms].some((x) => x.toLowerCase().includes(f)) || (w.meaning ?? "").includes(f));
+			const shown = words.filter((w) => !f || w.word.toLowerCase().includes(f) || [...w.forms].some((x) => x.toLowerCase().includes(f)) || (w.meaning ?? "").includes(f));
 			if (!shown.length) list.createDiv({ cls: "el-muted", text: words.length ? "沒有符合的字" : "還沒有生字。練習時點句子裡的字可以加入。" });
 			drawSplit(list, shown, (w) => bookStatus(d.states.get(wordQid(w.key))), !!f, (parent, w, status) => {
 				const st = d.states.get(wordQid(w.key));
 				const card = parent.createDiv({ cls: `el-card el-word-card is-${status}` });
 				const top = card.createDiv({ cls: "el-row" });
 				statusChip(top, status);
-				top.createSpan({ cls: "el-say el-title", text: w.word });
+				const ws = top.createSpan({ cls: "el-say el-title", text: w.word });
+				if (lang !== "en") ws.setAttribute("lang", lang);
 				if (w.ipa) top.createSpan({ cls: "el-ipa", text: w.ipa });
 				top.createSpan({ text: w.meaning ?? "" });
 				if (w.forms.size) card.createDiv({ cls: "el-muted", text: `也包含：${[...w.forms].join("、")}` });
@@ -170,9 +188,16 @@ export class StatsView extends ItemView {
 		el.addClass("el-verify");
 		el.addClass("el-practice");
 		header(el, "學習統計", p, () => this.render());
-		const d = await loadPractice(this.app, p.user, "all");
-		const answers = d.logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade");
-		const s = computeStats(answers, d.states);
+		const lang = p.lang;
+		const d = await loadPractice(this.app, p.user, "all", lang);
+		const answers = filterAnswersByLang(
+			d.logs.filter((e): e is AnswerLog | GradeLog => e.type === "answer" || e.type === "grade"),
+			d.banks,
+			lang,
+		);
+		const qids = new Set(answers.map((e) => e.qid));
+		const s = computeStats(answers, new Map([...d.states].filter(([k]) => qids.has(k))));
+		el.createDiv({ cls: "el-muted", text: `${LANG[lang].name}的學習紀錄` });
 
 		const tiles = el.createDiv({ cls: "el-tiles" });
 		const tile = (label: string, value: string, sub?: string) => {
@@ -209,7 +234,7 @@ export class StatsView extends ItemView {
 		});
 
 		el.createEl("h4", { text: "各題型正確率（最近 30 天）" });
-		const labels: Record<string, string> = { ...TYPE_LABEL, word: "生字複習", dictation: "聽寫", listening: "聽力理解", phrase: "句子" };
+		const labels: Record<string, string> = { ...TYPE_LABEL, word: "生字複習", dictation: "聽寫", listening: "聽力理解", phrase: "句子", kana: "假名" };
 		const types = Object.keys(s.byType);
 		if (!types.length) el.createDiv({ cls: "el-muted", text: "還沒有作答紀錄" });
 		for (const t of types) {
@@ -264,9 +289,10 @@ export class PhrasesView extends ItemView {
 		el.addClass("el-verify");
 		el.addClass("el-practice");
 		header(el, "句子本", p, () => this.render());
-		const d = await loadPractice(this.app, p.user, "all");
+		const lang = p.lang;
+		const d = await loadPractice(this.app, p.user, "all", lang);
 		const items = d.phrases;
-		el.createDiv({ cls: "el-muted", text: `共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法、錯誤分析的練習句，以及答錯的克漏字、翻譯、聽力句子。到「練習 → 句子」可以複習，英文對話也會自然用到到期的句子。` });
+		el.createDiv({ cls: "el-muted", text: `${LANG[lang].name}：共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法、錯誤分析的練習句，以及答錯的克漏字、翻譯、聽力句子。到「練習 → 句子」可以複習，英文對話也會自然用到到期的句子。` });
 		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: "搜尋中文或英文" } });
 		search.value = this.filter;
 		const list = el.createDiv();
@@ -281,7 +307,7 @@ export class PhrasesView extends ItemView {
 				const head = card.createDiv({ cls: "el-row" });
 				statusChip(head, status);
 				head.createSpan({ cls: "el-title", text: x.zh || "（中文會在練習時翻譯）" });
-				card.createDiv({ cls: "el-say el-sentence", text: x.en });
+				card.createDiv({ cls: "el-say el-sentence", text: x.en, attr: lang !== "en" ? { lang } : {} });
 				if (x.alt) card.createDiv({ cls: "el-say el-sentence el-muted", text: x.alt });
 				if (x.source === "correction" && x.original) card.createDiv({ cls: "el-d-typed", text: x.original });
 				if (x.note) card.createDiv({ cls: "el-muted", text: x.note });

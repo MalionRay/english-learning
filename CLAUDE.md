@@ -49,6 +49,19 @@
 - 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」
 - 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪
 
+## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
+- Lang = "en" | "es" | "ja"；西班牙文是拉丁美洲（墨西哥）用法，語音 es-US；日文給「從零開始」的學習者，語音 ja-JP（使用者 2026-10-31 決定）
+- 每位使用者可以學多種語言：練習、對話、生字本、句子本、統計、主畫面都有「語言」選單（langSelect）；目前語言存 localStorage english-learning:lang {user: lang}（plugin.lang）
+- 資料相容：英文的 key、qid、錄音雜湊、翻譯快取都不變；其他語言：生字 key "es:casa"／"ja:天気"（qid word:es:casa）、phraseKey／audioKey／聽力 id 的雜湊前面加 "es|"／"ja|"；新的 log（word-add、phrase-add、answer）帶 lang，沒有 lang＝英文；題庫、文章、對話檔、報告的 frontmatter／JSON 有 lang（沒有＝英文）
+- 分字 tokenize：英文、西班牙文用字母（含重音字母）；日文用 Intl.Segmenter（沒有時依文字種類切）；比對 matchAnswer：西班牙文只差重音算對但提醒（accentOnly）；日文漢字、平假名、片假名、羅馬拼音（含長音寫法差異）都算對
+- 出題（systemPrompt(level, lang)）：日文 vocab 有 reading（平假名）、romaji，cloze 有 answerReading、answerRomaji；解釋裡的漢字後面加讀音；pronLabel 顯示讀音（英文仍是 IPA）；題庫裡的 <span class="el-say" lang="ja">，點擊用對的語言唸
+- 日文讀音：句子下面顯示平假名與羅馬拼音（readingMany，一次查多句、快取在 localStorage english-learning:ja-reading-cache；練習開始時先查前 12 題；「あ」按鈕切換）；對話回覆、修正、怎麼說由 AI 一起回 replyReading／replyRomaji、reading／romaji
+- 假名題型（只有日文）：平假名、片假名各 46 個（KANA），qid "kana:あ"、qtype "kana"，看假名想讀音 → 翻面（羅馬拼音、例字、發音）→ 記得／不記得
+- 對話角色：西班牙文 Sofía（31 歲、墨西哥市）／小孩 Diego（12 歲、瓜達拉哈拉）；日文 結衣 Yui（30 歲、東京）／小孩 陽翔 Haruto（12 歲、橫濱）；日文可以打羅馬拼音、不因羅馬拼音糾正；程度起點：日文 1、西班牙文 2；STYLE_ES／STYLE_JA
+- 語音：字典真人錄音只有英文；Google Cloud 用 es-US／ja-JP 的 Chirp 3 HD（聲音沒有這個語言時改 Kore 再試）；系統語音每種語言各自選（english-learning:tts-voice:<lang>）；外掛畫面裡的 .el-say 用目前語言唸
+- 翻譯、批改、聽力批改、錯誤分析、修正題、拍照辨識、查原形（aiLemma：西班牙文、日文加入生字時都查一次）都依語言換提示
+- 統計依語言篩選作答（answerLang：紀錄的 lang → 題庫的 lang → 英文）
+
 ## 練習與 SRS（src/srs.ts、src/practice.ts、src/grade.ts）
 - 答題 log：type "answer"，含 qid（題目 UUID）、bank、qtype、session、correct／choice 或 text／score；relearn 表示同場答錯後重答（不影響排程）
 - 翻譯題離線時記 pending: true；之後由「作答的那台裝置」批改，另寫一筆 type "grade"（answerId 對應），不改原紀錄

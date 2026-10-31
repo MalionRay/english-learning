@@ -89,7 +89,7 @@ test("對話畫面：到期的字放進提示，用對了記一筆複習", async
 	];
 	const plugin: any = {
 		app,
-		user: "ray",
+		user: "ray", lang: "en",
 		deviceId: "ipad-1",
 		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
@@ -98,7 +98,7 @@ test("對話畫面：到期的字放進提示，用對了記一筆複習", async
 		},
 		backend: () => ({ chat: async (_t: unknown, o: any) => (systems.push(o.system), { text: JSON.stringify(replies[n++]), usage: {}, model: "m" }) }),
 		appendText: async (f: any, s: string) => void files.set(f.path, String(files.get(f.path) ?? "") + s),
-		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + Math.random(), ts: new Date().toISOString(), device: "ipad-1", user: "ray", type, ...extra }),
+		makeEntry: (type: string, extra: Record<string, unknown>) => ({ id: "e" + Math.random(), ts: new Date().toISOString(), device: "ipad-1", user: "ray", lang: "en", type, ...extra }),
 		appendLog: async (e: any) => void files.set("logs/ray/ipad-1.jsonl", String(files.get("logs/ray/ipad-1.jsonl")) + JSON.stringify(e) + "\n"),
 		addPhrase: async () => undefined,
 		debug: () => undefined,
