@@ -132,6 +132,9 @@
 - 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations、english/reports 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原（設定 →「從備份還原」，restoreBackup）：只補不蓋——缺少的檔案重建；.jsonl 依每行的 id 補回缺少的行；已存在的 .md 保留不動
 
+## 手機版面
+- iPhone 浮動導覽列（v0.21.2）：Obsidian 手機版下方的 .mobile-navbar 會蓋住外掛畫面底部（使用者回報對話的麥克風、送出被遮住）；src/navbar.ts 只在 Platform.isPhone 量導覽列高度＋CSS bottom＋8px，存成 body 的 --el-navbar-gap（resize、visualViewport、layout-change、每 2 秒；值沒變不動），styles.css 讓所有 english-learning-* 畫面的 .view-content 底部留這麼多；iPad、電腦是 0
+
 ## 專案慣例
 - 原始碼在 src/；`npm run build` 會先跑 tsc 再用 esbuild 輸出 main.js
 - `npm run check` 掃描是否違反上面的硬性限制；每次改完都要跑

@@ -1,5 +1,6 @@
 import * as obsidian from "obsidian";
 import { App, Notice, Platform, Plugin, TFile, normalizePath } from "obsidian";
+import { watchNavbar } from "./navbar";
 import { AIBackend, AIError, FallbackBackend, GeminiBackend } from "./ai";
 import {
 	DEFAULTS,
@@ -152,6 +153,8 @@ export default class EnglishLearningPlugin extends Plugin {
 		this.addCommand({ id: "practice", name: "開始練習", callback: () => this.openView(PRACTICE_VIEW) });
 		this.registerView(HOME_VIEW, (leaf) => new HomeView(leaf, this));
 		this.registerView(VERIFY_VIEW, (leaf) => new VerifyView(leaf, this));
+		// iPhone 下方浮動導覽列會蓋住畫面底部：量高度讓外掛畫面留空間
+		this.app.workspace.onLayoutReady(() => watchNavbar(this));
 		this.addRibbonIcon("book-open", "Language Learning", () => this.openView(HOME_VIEW));
 		this.addRibbonIcon("flask-conical", "Language Learning：驗證面板", () => this.openView(VERIFY_VIEW));
 

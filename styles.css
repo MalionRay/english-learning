@@ -150,3 +150,8 @@
 .el-reading-btn:not(.is-on) { opacity: 0.5; }
 .el-kana-big { font-size: 4em; text-align: center; margin: 12px 0; line-height: 1.2; }
 .el-lang-select { margin-right: 8px; }
+
+/* iPhone：底部留出 Obsidian 浮動導覽列的高度（src/navbar.ts 量出 --el-navbar-gap；其他裝置是 0） */
+.workspace-leaf-content[data-type^="english-learning-"] > .view-content {
+	padding-bottom: calc(var(--el-navbar-gap, 0px) + 4px);
+}
