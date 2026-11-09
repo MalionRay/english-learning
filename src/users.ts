@@ -1,6 +1,7 @@
 // 使用者：每位使用者是成人或小孩，資料（答題紀錄、對話、錯誤分析報告）各自獨立。
 // 使用者清單放在 Vault 裡（english/users/<deviceId>.jsonl，append-only、每台裝置只寫自己的檔），
 // 所以在一台裝置新增或刪除使用者，同步後其他裝置也會看到。依時間重播 user-add／user-remove。
+// 每位使用者自己的設定（例如對話記憶長度）也記在這裡：user-set（key、value），最後一筆為準，所有裝置一致。
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { Level } from "./generate";
 import { LOG_ROOT, listRecursive, safeName } from "./logs";
@@ -18,15 +19,37 @@ export interface UserEvent {
 	id: string;
 	ts: string;
 	device: string;
-	type: "user-add" | "user-remove";
+	type: "user-add" | "user-remove" | "user-set";
 	name: string;
 	level?: Level;
+	key?: keyof UserPrefs;
+	value?: unknown;
+}
+
+/** 每位使用者自己的設定（存在 english/users，會同步）。 */
+export interface UserPrefs {
+	chatMemory?: number; // 對話記憶長度：AI 看得到最近幾則訊息；0＝整段對話
 }
 
 export interface UserInfo {
 	name: string;
 	level: Level;
 	created: string;
+	prefs: UserPrefs;
+}
+
+/** 對話記憶長度的選項（0＝整段對話）與預設值。 */
+export const CHAT_MEMORY_OPTIONS = [24, 50, 100, 0] as const;
+export const CHAT_MEMORY_DEFAULT = 50;
+
+export function chatMemoryLabel(n: number): string {
+	return n === 0 ? "整段對話" : `最近 ${n} 則`;
+}
+
+/** 只接受選項裡的值，其他（舊資料、亂填）用預設。 */
+export function normalizeChatMemory(v: unknown): number {
+	const n = typeof v === "number" ? v : Number(v);
+	return (CHAT_MEMORY_OPTIONS as readonly number[]).includes(n) ? n : CHAT_MEMORY_DEFAULT;
 }
 
 export const LEVEL_NAME: Record<Level, string> = { adult: "成人", kid: "小孩" };
@@ -35,13 +58,17 @@ export const LEVEL_NAME: Record<Level, string> = { adult: "成人", kid: "小孩
 export function replayUsers(events: UserEvent[]): UserInfo[] {
 	const seen = new Set<string>();
 	const list = events
-		.filter((e) => e?.id && e.name && (e.type === "user-add" || e.type === "user-remove") && !seen.has(e.id) && !!seen.add(e.id))
+		.filter((e) => e?.id && e.name && (e.type === "user-add" || e.type === "user-remove" || e.type === "user-set") && !seen.has(e.id) && !!seen.add(e.id))
 		.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : 1));
 	const users = new Map<string, UserInfo>();
 	for (const e of list) {
 		const name = safeName(e.name);
+		const cur = users.get(name);
 		if (e.type === "user-remove") users.delete(name);
-		else users.set(name, { name, level: e.level === "kid" ? "kid" : "adult", created: users.get(name)?.created ?? e.ts });
+		else if (e.type === "user-set") {
+			// 設定只套用在已經存在的使用者（刪掉的人不會因為設定而復活）
+			if (cur && e.key) cur.prefs = { ...cur.prefs, [e.key]: e.value } as UserPrefs;
+		} else users.set(name, { name, level: e.level === "kid" ? "kid" : "adult", created: cur?.created ?? e.ts, prefs: cur?.prefs ?? {} });
 	}
 	return [...users.values()].sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.name < b.name ? -1 : 1));
 }

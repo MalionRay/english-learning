@@ -36,7 +36,7 @@ import { wordKey } from "./words";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
-import { DeleteResult, USERS_DIR, UserInfo, checkNewName, deleteUserData, loadUserEvents, replayUsers, seedEvents, usersPath } from "./users";
+import { DeleteResult, USERS_DIR, UserInfo, UserPrefs, checkNewName, deleteUserData, loadUserEvents, normalizeChatMemory, replayUsers, seedEvents, usersPath } from "./users";
 import { AddUserModal } from "./userview";
 import { LANG, LANGS, Lang, langOf } from "./lang";
 
@@ -231,7 +231,7 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	users(): UserInfo[] {
-		return this.userList.length ? [...this.userList] : this.settings.users.map((name) => ({ name, level: name === "kid" ? "kid" : "adult", created: "" }));
+		return this.userList.length ? [...this.userList] : this.settings.users.map((name) => ({ name, level: name === "kid" ? "kid" : "adult", created: "", prefs: {} }));
 	}
 
 	/** 這位使用者是成人還是小孩（決定題庫、對話角色、批改標準）。 */
@@ -239,6 +239,21 @@ export default class EnglishLearningPlugin extends Plugin {
 		const u = this.userList.find((x) => x.name === name);
 		if (u) return u.level;
 		return name === "kid" ? "kid" : "adult";
+	}
+
+	/** 這位使用者的對話記憶長度：AI 看得到最近幾則訊息（0＝整段對話）；沒設定是 50。 */
+	chatMemoryOf(name: string): number {
+		return normalizeChatMemory(this.userList.find((x) => x.name === name)?.prefs.chatMemory);
+	}
+
+	/** 改一位使用者自己的設定：寫進 english/users（會同步，所有裝置一樣）。 */
+	async setUserPref<K extends keyof UserPrefs>(name: string, key: K, value: UserPrefs[K]) {
+		if (!this.userNames().includes(name)) throw new Error(`沒有「${name}」這位使用者`);
+		const e = { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, type: "user-set", name, key, value };
+		await this.writer.append(usersPath(this.deviceId), JSON.stringify(e) + "\n");
+		await this.reloadUsers();
+		this.debug(`user pref: ${name} ${String(key)}=${JSON.stringify(value)}`);
+		this.triggerSync(true);
 	}
 
 	/** 從 english/users 重讀使用者清單；第一次執行時把舊設定裡的使用者寫進去。 */

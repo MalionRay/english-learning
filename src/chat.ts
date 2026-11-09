@@ -265,9 +265,9 @@ export function parseConvMessages(md: string): ConvMessage[] {
 	return out;
 }
 
-/** 送給 AI 的歷史：開場指令 + 最近 N 則。 */
-export function historyTurns(messages: ConvMessage[], max = 24): ChatTurn[] {
-	const recent = messages.slice(-max);
+/** 送給 AI 的歷史：開場指令 + 最近 N 則（N＝使用者的「對話記憶長度」；0＝整段對話）。 */
+export function historyTurns(messages: ConvMessage[], max = 50): ChatTurn[] {
+	const recent = max > 0 ? messages.slice(-max) : messages;
 	const turns: ChatTurn[] = [{ role: "user", text: OPENING }];
 	for (const m of recent) {
 		// Gemini 要求 user/model 交替：合併連續同角色

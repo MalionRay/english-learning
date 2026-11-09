@@ -466,7 +466,7 @@ export class ChatView extends ItemView {
 			// 寫檔不用等（寫入佇列會照順序），先送給 AI
 			p.appendText(this.file, convBlock(um)).catch((e) => p.debug(`chat append failed: ${(e as Error)?.message ?? e}`));
 		}
-		await this.ask(historyTurns(this.messages), text, null);
+		await this.ask(historyTurns(this.messages, this.plugin.chatMemoryOf(this.plugin.user)), text, null);
 	}
 
 	/** 語音訊息：錄音直接送給 AI，AI 聽寫（heard）後照平常回覆，只呼叫一次。 */
@@ -474,7 +474,7 @@ export class ChatView extends ItemView {
 		if (!this.meta || !this.file || this.sending) return;
 		const bubble = this.listEl?.createDiv({ cls: "el-bubble el-bubble-user is-voice", text: "🎤 語音訊息…" }) ?? null;
 		bubble?.scrollIntoView({ block: "end" });
-		const turns: ChatTurn[] = historyTurns(this.messages);
+		const turns: ChatTurn[] = historyTurns(this.messages, this.plugin.chatMemoryOf(this.plugin.user));
 		const audio = { mimeType: "audio/wav", data: arrayBufferToBase64(wav) };
 		const last = turns[turns.length - 1];
 		if (last?.role === "user") {

@@ -91,7 +91,7 @@ test("對話畫面：到期的字放進提示，用對了記一筆複習", async
 		app,
 		user: "ray", lang: "en",
 		deviceId: "ipad-1",
-		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
+		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();

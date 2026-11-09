@@ -90,11 +90,27 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 		],
 		userNames: () => ["ray", "amy"],
 		removeUser: async (name: string) => (removed.push(name), { files: 3, backups: 0 }),
+		prefs: { ray: 100 } as Record<string, number>,
+		chatMemoryOf: (n: string) => plugin.prefs[n] ?? 50,
+		setUserPref: async (n: string, k: string, v: number) => void (plugin.prefs[n] = v),
 	};
 	const el = document.createElement("div");
 	drawUsersSection(el, plugin, () => undefined);
 	const buttons = [...el.querySelectorAll("button")].map((b) => b.textContent);
 	assert.deepEqual(buttons, ["刪除…", "刪除…", "＋ 新增使用者…"]);
+	// 每位使用者自己的對話記憶長度
+	const selects = [...el.querySelectorAll("select")] as HTMLSelectElement[];
+	assert.equal(selects.length, 2);
+	assert.deepEqual(
+		[...selects[0].options].map((o) => o.textContent),
+		["最近 24 則", "最近 50 則（預設）", "最近 100 則", "整段對話"],
+	);
+	assert.equal(selects[0].value, "100", "ray 已設 100");
+	assert.equal(selects[1].value, "50", "amy 沒設＝預設 50");
+	selects[1].value = "0";
+	selects[1].dispatchEvent(new (window as any).Event("change"));
+	await new Promise((r) => setTimeout(r, 0));
+	assert.equal(plugin.prefs.amy, 0);
 
 	const m: any = new DeleteUserModal(plugin.app, plugin, "amy");
 	m.open();
@@ -158,4 +174,42 @@ test("主畫面（書本圖示）可以選使用者、新增使用者、選語�
 	const m: any = (globalThis as any).__lastModal;
 	assert.match(m.title, /刪除使用者「amy」/);
 	assert.ok(view.contentEl.querySelector("select.el-lang-select"));
+});
+
+test("每位使用者自己的對話記憶長度：user-set 最後一筆為準；刪掉的人不會因設定復活；不合法的值用預設 50", async () => {
+	const { CHAT_MEMORY_DEFAULT, normalizeChatMemory, chatMemoryLabel } = await import("../src/users");
+	const e = (type: string, name: string, ts: string, extra: Record<string, unknown> = {}) => ({ id: `${type}-${name}-${ts}`, ts, device: "pc", type, name, ...extra }) as any;
+	const evs = [
+		e("user-add", "ray", "2026-11-01T00:00:00Z", { level: "adult" }),
+		e("user-add", "amy", "2026-11-01T00:00:01Z", { level: "kid" }),
+		e("user-set", "ray", "2026-11-02T00:00:00Z", { key: "chatMemory", value: 100 }),
+		e("user-set", "ray", "2026-11-03T00:00:00Z", { key: "chatMemory", value: 0 }),
+		e("user-set", "ghost", "2026-11-03T00:00:00Z", { key: "chatMemory", value: 24 }),
+	];
+	const users = replayUsers(evs);
+	assert.deepEqual(
+		users.map((u) => [u.name, u.prefs.chatMemory]),
+		[["ray", 0], ["amy", undefined]],
+	);
+	assert.ok(!users.some((u) => u.name === "ghost"));
+	const again = replayUsers([...evs, e("user-add", "ray", "2026-11-04T00:00:00Z", { level: "kid" })]);
+	assert.equal(again.find((u) => u.name === "ray")!.prefs.chatMemory, 0, "改程度不會清掉設定");
+	const removed = replayUsers([...evs, e("user-remove", "ray", "2026-11-05T00:00:00Z"), e("user-add", "ray", "2026-11-06T00:00:00Z", { level: "adult" })]);
+	assert.equal(removed.find((u) => u.name === "ray")!.prefs.chatMemory, undefined, "刪掉再建立是新的人");
+	assert.equal(normalizeChatMemory(undefined), CHAT_MEMORY_DEFAULT);
+	assert.equal(normalizeChatMemory(37), 50);
+	assert.equal(normalizeChatMemory("100"), 100);
+	assert.equal(normalizeChatMemory(0), 0);
+	assert.equal(chatMemoryLabel(0), "整段對話");
+	assert.equal(chatMemoryLabel(24), "最近 24 則");
+});
+
+test("送給 AI 的歷史依記憶長度截取；0＝整段對話", async () => {
+	const { historyTurns } = await import("../src/chat");
+	const msgs = Array.from({ length: 120 }, (_, i) => ({ role: i % 2 ? "model" : "user", text: `m${i}` })) as any;
+	const count = (max?: number) => historyTurns(msgs, max).reduce((n, t) => n + t.text.split("\n").filter((x) => /^m\d+$/.test(x)).length, 0);
+	assert.equal(count(24), 24);
+	assert.equal(count(), 50, "預設 50");
+	assert.equal(count(100), 100);
+	assert.equal(count(0), 120);
 });

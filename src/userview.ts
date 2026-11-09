@@ -2,7 +2,7 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
-import { LEVEL_NAME, checkNewName } from "./users";
+import { CHAT_MEMORY_DEFAULT, CHAT_MEMORY_OPTIONS, LEVEL_NAME, chatMemoryLabel, checkNewName } from "./users";
 
 export class AddUserModal extends Modal {
 	private name = "";
@@ -117,4 +117,23 @@ export function drawUsersSection(container: HTMLElement, plugin: EnglishLearning
 	new Setting(container)
 		.setDesc("每位使用者的資料分開；新增或刪除後，同步到其他裝置也會一樣。")
 		.addButton((b) => b.setButtonText("＋ 新增使用者…").setCta().onClick(() => new AddUserModal(plugin.app, plugin, redraw).open()));
+
+	// 每位使用者自己的對話記憶長度（存在 english/users，所有裝置一樣）
+	new Setting(container)
+		.setName("對話記憶長度")
+		.setDesc("對話時 AI 看得到最近幾則訊息（你和 AI 各算一則）。越多越記得前面聊過的事，回覆會稍慢一點。每位使用者各自設定，所有裝置一樣。")
+		.setHeading();
+	for (const u of users) {
+		new Setting(container).setName(u.name).addDropdown((d) => {
+			for (const n of CHAT_MEMORY_OPTIONS) d.addOption(String(n), chatMemoryLabel(n) + (n === CHAT_MEMORY_DEFAULT ? "（預設）" : ""));
+			d.setValue(String(plugin.chatMemoryOf(u.name))).onChange(async (v) => {
+				try {
+					await plugin.setUserPref(u.name, "chatMemory", Number(v));
+					new Notice(`${u.name} 的對話記憶：${chatMemoryLabel(Number(v))}`);
+				} catch (e) {
+					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
+				}
+			});
+		});
+	}
 }

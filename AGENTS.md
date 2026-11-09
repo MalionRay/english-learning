@@ -49,6 +49,7 @@
 - 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
 - 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
 - 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」；主畫面（書本圖示）也有使用者選單、「＋ 新增使用者」（v0.20.2）和「刪除使用者…」（刪選單上選的那位，v0.20.3）
+- 每位使用者自己的設定（v0.22.0）：同一個 jsonl 裡的 type "user-set"（key、value），重播時最後一筆為準、只套用在已存在的使用者（刪掉再建立是新的人，設定清空）；UserInfo.prefs；plugin.setUserPref 寫入並觸發同步；目前只有 chatMemory（對話記憶長度）
 - 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
 
 ## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
@@ -99,6 +100,7 @@
 - 播放走發音流程，慢速 0.7 倍；從「下一題」進來時自動播放（仍在點擊事件內）；diffWords 逐字比對保留備用
 
 ## 英文對話與句子本（src/chat.ts、src/chatview.ts）
+- 對話記憶長度（v0.22.0，使用者 2026-11-09 要求、每個帳號各自設定）：historyTurns 只送最近 N 則訊息給 AI（N＝plugin.chatMemoryOf(user)：24／50／100／0＝整段對話，預設 50，不在選項裡的值用 50；原本固定 24）；設定頁「使用者」區下面「對話記憶長度」每位一個選單；不同次對話之間 AI 不記得內容（前 3 次對話只拿來估程度）
 - AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
 - 對話角色：成人 Alex（32 歲、Portland、設計師、去過台灣）、小孩 Mia（12 歲、Seattle）；提示要求針對細節回應、分享自己的經驗、不要制式稱讚開頭、口語、每次最多一個問題；temperature 0.9（使用者回饋 3.1-flash-lite 的回答很機械）
 - 對話自適應程度（src/chatlevel.ts，v0.18.0）：每次呼叫依最近 10 則學習者訊息（含這位使用者前 3 次對話）估 1～5 級（小孩最多 4；沒紀錄時成人 3、小孩 2；樣本少時往起點靠、越新越重）。訊息分數：全中文 0.15、被糾正依字的編輯距離（小錯 0.75、重寫 0.1）、夾中文最多 0.5、沒錯 1（1～2 字 0.6）；平均少於 4 字最多 3 級；還沒有 AI 回覆的訊息不算。levelPrompt 加在系統提示：低級短句常用字，高級像朋友聊天；明確要求「自然不等於困難」，不刻意用難字難句。頂端顯示「程度：…」，改變時寫 debug

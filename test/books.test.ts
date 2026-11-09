@@ -35,7 +35,7 @@ test("生字本：熟練的收在「已熟練」裡，其他依狀態排前面�
 			["logs/ray/d.jsonl", logs.map((l) => JSON.stringify(l)).join("\n") + "\n"],
 		]),
 	);
-	const plugin: any = { app, user: "ray", lang: "en", settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], levelOf: (u: string) => (u === "kid" ? "kid" : "adult"), makeEntry: () => ({}), appendLog: async () => undefined };
+	const plugin: any = { app, user: "ray", lang: "en", settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"), makeEntry: () => ({}), appendLog: async () => undefined };
 	const view: any = new WordsView({ app } as any, plugin);
 	await view.onOpen();
 	await sleep(30);

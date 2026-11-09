@@ -28,7 +28,7 @@ function setup(lang: "en" | "es" | "ja") {
 		deviceId: "ipad-1",
 		settings: { users: ["ray"], newPerDay: 10 },
 		userNames: () => ["ray"],
-		levelOf: () => "adult",
+		chatMemoryOf: () => 50, levelOf: () => "adult",
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();
