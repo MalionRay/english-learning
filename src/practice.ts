@@ -7,7 +7,7 @@ import { DictItem, dictationItems } from "./dictation";
 import { PhraseItem, PhraseLog, buildPhraseBook, failedSentenceMap, phraseQid } from "./chat";
 import { Menu } from "obsidian";
 import type EnglishLearningPlugin from "./main";
-import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, parseBank, pronLabel, stripMarks } from "./generate";
+import { Bank, ChoiceQ, Level, QType, Question, TYPE_LABEL, TranslateQ, fillBlank, parseBank, pronLabel, stripMarks } from "./generate";
 import { BANK_DIR, stripFrontmatter } from "./sources";
 import { LOG_ROOT, listRecursive, safeName, uuid } from "./logs";
 import { AnswerLog, GradeLog, QState, computeStates, newIntroducedToday, pickSession } from "./srs";
@@ -281,12 +281,17 @@ export function nearMiss(typed: string, answer: string): boolean {
 	return a.slice(i + 1) === b.slice(i + 1) || a.slice(i) === b.slice(i + 1) || a.slice(i + 1) === b.slice(i);
 }
 
+/** 正在補批改離線時的作答（所有練習畫面共用：同一題不要批改兩次）。 */
+let gradingPending = false;
+
 export class PracticeView extends ItemView {
 	private phase: Phase = "start";
 	private busyText = "";
 	private sessionId = "";
 	private sessionType: SessionType = "vocab";
 	private lang: Lang = "en"; // 這場練習的語言
+	/** 這場練習是誰在練（開始時記下來；練到一半在別的分頁換了使用者，作答還是記在這個人身上）。 */
+	private user = "";
 	private wordKeys = new Set<string>(); // 生字本裡已有的字（點字選單用）
 	private items: PQ[] = [];
 	private idx = 0;
@@ -462,6 +467,10 @@ export class PracticeView extends ItemView {
 	private async start(type: SessionType) {
 		const p = this.plugin;
 		const prefs = this.prefs();
+		// 按下開始的當下是誰、學哪個語言，先記下來：下面同步要等，這中間可能有人在別的分頁換了使用者
+		this.user = p.user;
+		const lang = p.lang;
+		this.lang = lang;
 		if (prefs.sync) {
 			this.setBusy("同步中…（下載其他裝置的進度）");
 			const ok = await p.syncAndWait((s) => {
@@ -471,11 +480,19 @@ export class PracticeView extends ItemView {
 			if (!ok) new Notice("沒有完成同步，改用這台裝置上的資料練習", 6000);
 		}
 		this.setBusy("準備題目…");
-		const lang = p.lang;
-		this.lang = lang;
 		const TYPES = typesFor(lang);
-		const d = await loadPractice(this.app, p.user, prefs.level, lang);
-		this.gradePendingInBackground(d.logs);
+		let d: PracticeData;
+		try {
+			d = await loadPractice(this.app, this.user, prefs.level, lang);
+		} catch (e) {
+			// 讀檔失敗（例如同步到一半的檔案）：回到開始畫面，不要卡在「準備題目…」
+			this.phase = "start";
+			this.drawStart();
+			new Notice(`讀取題庫或紀錄失敗：${(e as Error)?.message ?? e}`, 10000);
+			p.debug(`practice start failed: ${(e as Error)?.message ?? e}`);
+			return;
+		}
+		this.gradePendingInBackground(d.logs).catch((e) => p.debug(`grade pending failed: ${(e as Error)?.message ?? e}`));
 
 		this.wordKeys = new Set(d.words.map((w) => w.key));
 		let counts: { due: number; fresh: number };
@@ -510,7 +527,7 @@ export class PracticeView extends ItemView {
 		this.results = [];
 		this.requeued.clear();
 		this.phase = "question";
-		p.debug(`practice start user=${p.user} type=${type} items=${this.items.length} (due ${counts.due}, new ${counts.fresh})`);
+		p.debug(`practice start user=${this.user} type=${type} items=${this.items.length} (due ${counts.due}, new ${counts.fresh})`);
 		this.drawQuestion();
 	}
 
@@ -525,7 +542,18 @@ export class PracticeView extends ItemView {
 	private async gradePendingInBackground(logs: UserLog[]) {
 		const p = this.plugin;
 		const pend = pendingAnswers(logs, p.deviceId);
-		if (!pend.length || !p.getApiKey()) return;
+		if (!pend.length || !p.getApiKey() || gradingPending) return;
+		gradingPending = true;
+		try {
+			await this.gradePending(logs, pend, this.user);
+		} finally {
+			gradingPending = false;
+		}
+	}
+
+	/** user：這些作答是誰的。批改結果要寫回同一個人的紀錄，不然那個人永遠看不到（每次開始又重批一次）。 */
+	private async gradePending(logs: UserLog[], pend: AnswerLog[], user: string) {
+		const p = this.plugin;
 		const banks = await loadBanks(this.app);
 		const qmap = new Map<string, { q: TranslateQ; level: Level; lang: Lang }>();
 		for (const b of banks) for (const q of b.questions) if (q.type === "translate") qmap.set(q.id, { q, level: b.level, lang: langOf(b.lang) });
@@ -542,7 +570,7 @@ export class PracticeView extends ItemView {
 			if (li && a.text) {
 				try {
 					const g = await gradeListening(p.fastBackend(), li.text, li.zh, a.text, li.level, li.lang);
-					await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: g.score, correct: g.correct, feedback: g.feedback }));
+					await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: g.score, correct: g.correct, feedback: g.feedback }, user));
 					done++;
 				} catch (e) {
 					p.debug(`grade pending failed: ${(e as Error)?.message ?? e}`);
@@ -551,11 +579,11 @@ export class PracticeView extends ItemView {
 				continue;
 			}
 			const ph = a.qtype === "phrase" ? phraseMap.get(a.qid) : undefined;
-			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: this.plugin.levelOf(this.plugin.user), lang: ph.lang } : qmap.get(a.qid);
+			const hit = ph ? { q: phrasePQ(ph).q as TranslateQ, level: this.plugin.levelOf(user), lang: ph.lang } : qmap.get(a.qid);
 			if (!hit || !a.text) continue;
 			try {
 				const r = await gradeTranslation(p.fastBackend(), hit.q, a.text, hit.level, hit.lang);
-				await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: r.score, correct: r.correct, feedback: r.feedback, corrected: r.corrected }));
+				await p.appendLog(p.makeEntry("grade", { answerId: a.id, qid: a.qid, score: r.score, correct: r.correct, feedback: r.feedback, corrected: r.corrected }, user));
 				done++;
 			} catch (e) {
 				p.debug(`grade pending failed: ${(e as Error)?.message ?? e}`);
@@ -695,7 +723,7 @@ export class PracticeView extends ItemView {
 			else if (x.dict) texts.push(x.dict.text);
 			else if (x.phrase) texts.push(x.phrase.en);
 			else if (q.type === "vocab") texts.push(...(q.direction === "zh2en" ? q.options : [q.prompt]), ...(q.context ? [q.context] : []));
-			else if (q.type === "cloze") texts.push(q.prompt, q.prompt.replace("____", q.options[q.answer]));
+			else if (q.type === "cloze") texts.push(q.prompt, fillBlank(q.prompt, q.options[q.answer]));
 			else if (q.type === "reading") texts.push(q.prompt, ...q.options);
 			else if (q.type === "translate") texts.push(q.reference);
 		}
@@ -719,7 +747,7 @@ export class PracticeView extends ItemView {
 				.setDisabled(inBook)
 				.onClick(async () => {
 					this.wordKeys.add(wordKey(word, this.lang));
-					await this.plugin.addWord(word, sentence, bank && bank !== WORD_BANK ? bank.sourceId : undefined, this.lang);
+					await this.plugin.addWord(word, sentence, bank && bank !== WORD_BANK ? bank.sourceId : undefined, this.lang, this.user || undefined);
 				}),
 		);
 		menu.showAtMouseEvent(evt);
@@ -874,7 +902,7 @@ export class PracticeView extends ItemView {
 			let res: { correct?: boolean; score?: number; feedback?: string; corrected?: string; pending?: boolean };
 			try {
 				if (!navigator.onLine) throw new Error("offline");
-				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.levelOf(this.plugin.user), this.lang);
+				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.levelOf(this.user), this.lang);
 			} catch (e) {
 				this.plugin.debug(`phrase grade failed: ${(e as Error)?.message ?? e}`);
 				res = { pending: true };
@@ -1035,8 +1063,9 @@ export class PracticeView extends ItemView {
 
 	// ---- 出題 ----
 	private drawQuestion() {
-		const el = this.root();
 		const pq = this.items[this.idx];
+		if (!pq) return this.finish(); // 題目被拿掉（回報後）已經沒有下一題
+		const el = this.root();
 		const q = pq.q;
 		this.answered = false;
 		this.hintUsed = false;
@@ -1044,13 +1073,13 @@ export class PracticeView extends ItemView {
 		const top = el.createDiv({ cls: "el-row el-top" });
 		const realTotal = this.items.filter((x) => !x.relearn).length;
 		const realIdx = this.items.slice(0, this.idx + 1).filter((x) => !x.relearn).length;
-		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
+		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.user}` });
 		top.createSpan({ cls: "el-muted", text: pq.relearn ? "再練一次" : `${realIdx} / ${realTotal}` });
 		top.createSpan({ cls: "el-badge", text: pq.kana ? LABEL.kana : pq.word ? LABEL.word : pq.dict ? LABEL.listening : pq.phrase ? LABEL.phrase : TYPE_LABEL[q.type] });
 		if (pq.marked) top.createSpan({ cls: "el-badge", text: "⭐生字" });
 		const quit = top.createEl("a", { text: "結束", cls: "el-quit" });
 		quit.onclick = () => this.finish();
-		if (!pq.word && !pq.dict && !pq.phrase) {
+		if (!pq.word && !pq.dict && !pq.phrase && !pq.kana) {
 			const flag = top.createEl("a", { text: "⚑ 回報", cls: "el-flag" });
 			flag.onclick = () => new FlagModal(this.app, (reason) => this.flagCurrent(reason)).open();
 		}
@@ -1137,7 +1166,7 @@ export class PracticeView extends ItemView {
 			if (pronLabel(q)) w.createSpan({ cls: "el-ipa", text: ` ${pronLabel(q)}` });
 			if (q.context) this.sentence(fb, q.context, q.contextZh);
 		}
-		if (q.type === "cloze") this.sentence(fb, q.prompt.replace("____", q.options[q.answer]), q.promptZh);
+		if (q.type === "cloze") this.sentence(fb, fillBlank(q.prompt, q.options[q.answer]), q.promptZh);
 		if (q.explanation) fb.createDiv({ cls: "el-explain", text: q.explanation });
 		this.nextButton(card);
 	}
@@ -1145,7 +1174,7 @@ export class PracticeView extends ItemView {
 	/** 克漏字：打字作答（題庫裡的 options[answer] 就是答案，其他選項不再顯示）。 */
 	private drawCloze(card: HTMLElement, pq: PQ, q: ChoiceQ) {
 		const answer = q.options[q.answer];
-		const full = q.prompt.replace("____", answer);
+		const full = fillBlank(q.prompt, answer);
 		this.wordLine(card, q.prompt, { zh: q.promptZh, zhText: full, cls: "el-qtext", say: false, bank: pq.bank });
 
 		// 提示：字首與字母數、中文意思（看了算提示）
@@ -1210,7 +1239,8 @@ export class PracticeView extends ItemView {
 			done(typed, false);
 		};
 		input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter") {
+			// 日文輸入法選字時的 Enter 是「確定選字」，不是送出
+			if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) {
 				e.preventDefault();
 				send.click();
 			}
@@ -1297,7 +1327,7 @@ export class PracticeView extends ItemView {
 		if (r.dontKnow) extra.dontKnow = true;
 		if (pq.relearn) extra.relearn = true;
 		if (pq.marked) extra.marked = true;
-		p.appendLog(p.makeEntry("answer", extra)).catch((e) => new Notice(`寫入紀錄失敗：${(e as Error)?.message ?? e}`));
+		p.appendLog(p.makeEntry("answer", extra, this.user)).catch((e) => new Notice(`寫入紀錄失敗：${(e as Error)?.message ?? e}`));
 
 		if (!pq.relearn) this.results.push({ pq, correct: r.correct, pending: r.pending });
 		// 答錯的題目在這場最後再練一次（只重出一次）
@@ -1310,7 +1340,7 @@ export class PracticeView extends ItemView {
 	private async flagCurrent(reason: string) {
 		const p = this.plugin;
 		const pq = this.items[this.idx];
-		await p.appendLog(p.makeEntry("flag", { qid: pq.q.id, bank: pq.bank.sourceId, qtype: pq.q.type, reason })).catch(() => undefined);
+		await p.appendLog(p.makeEntry("flag", { qid: pq.q.id, bank: pq.bank.sourceId, qtype: pq.q.type, reason }, this.user)).catch(() => undefined);
 		// 這場後面如果還排了這題（答錯重練），也拿掉
 		this.items = this.items.filter((x, i) => i <= this.idx || x.q.id !== pq.q.id);
 		p.debug(`flag ${pq.q.id} (${reason})`);
@@ -1357,7 +1387,8 @@ export class PracticeView extends ItemView {
 		const last = this.idx >= this.items.length - 1;
 		const b = row.createEl("button", { text: last ? "看結果" : "下一題", cls: "mod-cta" });
 		b.onclick = () => {
-			if (last) return this.finish();
+			// 按的時候再看一次：答錯後回報這題，排在後面的「再練一次」會被拿掉
+			if (this.idx >= this.items.length - 1) return this.finish();
 			this.idx++;
 			this.drawQuestion();
 		};

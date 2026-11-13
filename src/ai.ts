@@ -113,11 +113,13 @@ export function hedged<T>(fn: () => Promise<T>, hedgeAfterMs?: number, timeoutMs
 		let settled = false;
 		let running = 0;
 		let launched = 0;
-		const timers: ReturnType<typeof setTimeout>[] = [];
+		let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
+		let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 		const finish = (ok: boolean, v: unknown) => {
 			if (settled) return;
 			settled = true;
-			timers.forEach(clearTimeout);
+			if (hedgeTimer) clearTimeout(hedgeTimer);
+			if (timeoutTimer) clearTimeout(timeoutTimer);
 			if (ok) resolve(v as T);
 			else reject(v);
 		};
@@ -128,19 +130,24 @@ export function hedged<T>(fn: () => Promise<T>, hedgeAfterMs?: number, timeoutMs
 				(v) => finish(true, v),
 				(e) => {
 					running--;
-					// 還有另一個在跑、或還會再送一次：等它
-					if (running === 0 && (launched >= 2 || !hedgeAfterMs)) finish(false, e);
-					else if (running === 0) {
-						timers.forEach(clearTimeout);
-						launch();
-					}
+					if (running > 0) return; // 另一個還在跑：等它
+					if (launched >= 2 || !hedgeAfterMs) return finish(false, e);
+					// 第一次很快就失敗、還沒到「再送一次」的時間：馬上再送。
+					// 只取消「再送一次」的計時器；整體逾時要留著，不然第二次卡住時會永遠等下去
+					if (hedgeTimer) clearTimeout(hedgeTimer);
+					hedgeTimer = null;
+					launch();
 				},
 			);
 		};
 		launch();
-		if (hedgeAfterMs) timers.push(setTimeout(() => !settled && launched < 2 && launch(), hedgeAfterMs));
+		if (hedgeAfterMs)
+			hedgeTimer = setTimeout(() => {
+				hedgeTimer = null;
+				if (!settled && launched < 2) launch();
+			}, hedgeAfterMs);
 		if (timeoutMs)
-			timers.push(setTimeout(() => finish(false, new AIError(`AI 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應，請再送一次。`, undefined, "", "network")), timeoutMs));
+			timeoutTimer = setTimeout(() => finish(false, new AIError(`AI 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應，請再送一次。`, undefined, "", "network")), timeoutMs);
 	});
 }
 

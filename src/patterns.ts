@@ -4,7 +4,8 @@
 import { App, TFile, normalizePath } from "obsidian";
 import type { AIBackend } from "./ai";
 import type { Bank, ChoiceQ, Level, Question, TranslateQ } from "./generate";
-import { CONV_DIR, parseConvMessages, parseReply } from "./chat";
+import { CONV_DIR, parseConvMessages, parseReply, yamlName } from "./chat";
+import { convUser } from "./users";
 import type { AnswerLog, GradeLog } from "./srs";
 import { safeName } from "./logs";
 import { LANG, Lang, langOf } from "./lang";
@@ -95,7 +96,7 @@ export async function loadConversationErrors(app: App, user: string, sinceMs: nu
 		if (fm && fm.user !== undefined && String(fm.user) !== user) continue;
 		if (fm && langOf(fm.lang) !== lang) continue;
 		const text = await app.vault.cachedRead(f);
-		if (!fm && !new RegExp(`^user: ${user.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m").test(text)) continue;
+		if (!fm && convUser(text) !== safeName(user)) continue;
 		out.push(...collectChatErrors(parseConvMessages(text), sinceMs));
 	}
 	return out;
@@ -188,7 +189,7 @@ export function reportMarkdown(r: PatternReport, user: string, generatedAt: stri
 	const day = (t: string) => t.slice(0, 10);
 	const lines = [
 		"---",
-		`user: ${user}`,
+		`user: ${yamlName(user)}`,
 		`generated: ${generatedAt}`,
 		`errors: ${r.count}`,
 		...(lang !== "en" ? [`lang: ${lang}`] : []),

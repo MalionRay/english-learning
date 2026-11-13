@@ -1,5 +1,6 @@
 // 聽力理解（原聽寫）：從題庫裡的英文句子產生聽力項目。逐字比對（diffWords）保留備用。不碰 Vault，方便測試。
 import type { Bank, ChoiceQ, Question } from "./generate";
+import { fillBlank } from "./generate";
 import { audioKey } from "./pronounce";
 import { Lang, countWords, langOf } from "./lang";
 
@@ -32,7 +33,7 @@ function sentencesOf(q: Question): { text: string; zh?: string }[] {
 	}
 	if (q.type === "cloze") {
 		const c = q as ChoiceQ;
-		return [{ text: c.prompt.replace("____", c.options[c.answer]), zh: c.promptZh }];
+		return [{ text: fillBlank(c.prompt, c.options[c.answer]), zh: c.promptZh }];
 	}
 	if (q.type === "translate") return [{ text: q.reference, zh: q.prompt }];
 	return [];

@@ -301,6 +301,14 @@ function overlap(a: Set<string>, b: Set<string>): number {
 	return n / Math.min(a.size, b.size);
 }
 
+/**
+ * 把克漏字的空格換成答案。用函式當替換值：答案裡有 $（例如 "$5"、"$&"）時，
+ * 字串替換會把它當成特殊記號。
+ */
+export function fillBlank(prompt: string, answer: string): string {
+	return prompt.replace("____", () => answer);
+}
+
 /** 去掉從網頁複製時夾帶的零寬字元。 */
 export function cleanText(s: string): string {
 	return s.replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "");
@@ -383,7 +391,12 @@ export function parseQuestions(text: string, rand: () => number = Math.random, l
 				drop("克漏字沒有空格", raw);
 				continue;
 			}
-			prompt = prompt.replace(/_{2,}/g, "____");
+			// 兩個字的答案 AI 有時寫成「____ ____」：相鄰的空格併成一個
+			prompt = prompt.replace(/_{2,}(?:\s+_{2,})*/g, "____");
+			if (prompt.split("____").length > 2) {
+				drop("克漏字有兩個以上的空格", raw);
+				continue;
+			}
 			if (sameSentence(prompt)) {
 				drop("和其他題用同一句", raw);
 				continue;
@@ -522,7 +535,7 @@ export function renderBank(bank: Bank, sourceLinkTarget: string): string {
 				q.options.forEach((o, i) => parts.push(`- ${LETTERS[i]}. ${o}`));
 				parts.push("");
 				const clozeRead = q.type === "cloze" && (q.answerReading || q.answerRomaji) ? `（${[q.answerReading, q.answerRomaji].filter(Boolean).join("，")}）` : "";
-				const ans = q.type === "cloze" ? say(q.prompt.replace("____", q.options[q.answer]), true) : `${LETTERS[q.answer]}. ${q.options[q.answer]}`;
+				const ans = q.type === "cloze" ? say(fillBlank(q.prompt, q.options[q.answer]), true) : `${LETTERS[q.answer]}. ${q.options[q.answer]}`;
 				const zh = [q.contextZh, q.promptZh].filter(Boolean).map((z) => `（中）${z}`).join("\n");
 				parts.push("> [!success]- 答案", quoteLines(`${q.type === "cloze" ? `${LETTERS[q.answer]}. ${q.options[q.answer]}${clozeRead}\n\n` : ""}${reveal}${ans}\n\n${zh ? `${zh}\n\n` : ""}${q.explanation}`), "");
 			}

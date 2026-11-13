@@ -30,15 +30,27 @@ export class WavRecorder {
 	async start(): Promise<void> {
 		const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 		this.ctx = new Ctx();
-		if (this.ctx.state === "suspended") await this.ctx.resume();
-		this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-		this.rate = this.ctx.sampleRate;
-		const src = this.ctx.createMediaStreamSource(this.stream);
-		this.node = this.ctx.createScriptProcessor(4096, 1, 1);
-		this.chunks = [];
-		this.node.onaudioprocess = (e) => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-		src.connect(this.node);
-		this.node.connect(this.ctx.destination);
+		try {
+			if (this.ctx.state === "suspended") await this.ctx.resume();
+			this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+			this.rate = this.ctx.sampleRate;
+			const src = this.ctx.createMediaStreamSource(this.stream);
+			this.node = this.ctx.createScriptProcessor(4096, 1, 1);
+			this.chunks = [];
+			this.node.onaudioprocess = (e) => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+			src.connect(this.node);
+			this.node.connect(this.ctx.destination);
+		} catch (e) {
+			// 沒拿到麥克風（沒給權限、被別的 App 佔用）：把已經開的東西關掉。
+			// iOS 同時只能開幾個 AudioContext，漏掉幾次之後就再也錄不了音
+			this.node?.disconnect();
+			this.node = null;
+			this.stream?.getTracks().forEach((t) => t.stop());
+			this.stream = null;
+			await this.ctx?.close().catch(() => undefined);
+			this.ctx = null;
+			throw e;
+		}
 		this.timer = window.setTimeout(() => this.onAutoStop?.(), MAX_SECONDS * 1000);
 	}
 

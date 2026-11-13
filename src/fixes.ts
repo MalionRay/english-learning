@@ -128,6 +128,8 @@ Return ONLY JSON {"verdict":"fixed"|"original_correct","reference":"<corrected r
 			return { kind: "replaced", sameId: false, message: s(j.message), question: { ...old, id: uuid(), reference: ref, explanation: s(j.explanation) || old.explanation } };
 		}
 		const cq = old as ChoiceQ;
+		// 日文克漏字帶著答案的讀音（打假名、羅馬拼音也算對）：答案換了，讀音也要跟著換
+		const hasReading = cq.type === "cloze" && !!(cq.answerReading || cq.answerRomaji);
 		const j = parseJson(
 			(
 				await ai.complete(
@@ -136,7 +138,7 @@ Question: ${cq.prompt}${cq.context ? `\nContext sentence: ${cq.context}` : ""}
 Options (index: text): ${cq.options.map((o, i) => `${i}: ${o}`).join(" | ")}
 Marked answer index: ${cq.answer}
 Decide, based on the article, which option is actually correct.
-Return ONLY JSON {"verdict":"fixed"|"original_correct","answer":<0-3>,"explanation":"<繁中：為什麼這個答案正確>","message":"<繁中 1-2 句：給學習者的說明>"}${art}`,
+Return ONLY JSON {"verdict":"fixed"|"original_correct","answer":<0-3>,${hasReading ? `"answerReading":"<hiragana reading of the correct option>","answerRomaji":"<Hepburn romaji of the correct option>",` : ""}"explanation":"<繁中：為什麼這個答案正確>","message":"<繁中 1-2 句：給學習者的說明>"}${art}`,
 					{ system: sys, json: true, maxOutputTokens: 1024, temperature: 0.2 },
 				)
 			).text,
@@ -145,7 +147,15 @@ Return ONLY JSON {"verdict":"fixed"|"original_correct","answer":<0-3>,"explanati
 		if (s(j.verdict) === "original_correct" || ans === cq.answer)
 			return { kind: "originalCorrect", message: s(j.message) || "AI 判斷原本標示的答案是正確的。" };
 		if (!Number.isInteger(ans) || ans < 0 || ans > 3) throw new Error("AI 回傳的答案編號不正確");
-		return { kind: "replaced", sameId: false, message: s(j.message), question: { ...cq, id: uuid(), answer: ans, explanation: s(j.explanation) || cq.explanation } };
+		const fixed: ChoiceQ = { ...cq, id: uuid(), answer: ans, explanation: s(j.explanation) || cq.explanation };
+		if (hasReading) {
+			// 留著舊的讀音，打舊答案的假名也會被當成答對：AI 有給新的就換，沒給就拿掉
+			delete fixed.answerReading;
+			delete fixed.answerRomaji;
+			if (s(j.answerReading)) fixed.answerReading = s(j.answerReading);
+			if (s(j.answerRomaji)) fixed.answerRomaji = s(j.answerRomaji);
+		}
+		return { kind: "replaced", sameId: false, message: s(j.message), question: fixed };
 	}
 
 	// ---- 翻譯或解釋有錯：題目不變、保留 UUID ----

@@ -72,7 +72,7 @@
 - 排程：依時間戳（同時間依 UUID）重播；答對進下一格 LADDER [1,3,7,14,30,60,120,240] 天，生字用 MARKED_LADDER；答錯回第一格；到期提前 4 小時
 - 出題：到期優先（上次答錯 > 生字 > 最久），不夠補新題；每場答錯的題目最後重出一次
 - 每天新題上限（設定 newPerDay，預設 10，每種題型各自計算）：今天第一次練的題數由 log 算（newIntroducedToday），到期複習不受限
-- 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API），讀不到就等 Vault 安靜 3 秒
+- 同步：syncAndWait 讀 Remotely Save 內部的 isSyncing（非正式 API；等待的邏輯在 src/syncwait.ts），讀不到就等 Vault 安靜 3 秒
 - 題庫篩選：小孩使用者預設小孩題庫，成人預設成人題庫（plugin.levelOf）；偏好存 localStorage
 - 一次練一種題型（開始畫面依題型列出到期／新題數）；或按最上面的「今日複習」（v0.18.0，mixSession）：各題型到期的輪流混在一起，到期不夠題數再輪流補新題（各題型仍受每日新題上限）
 - 中文翻譯：出題時產生 contextZh、promptZh、optionsZh（optionsZh 與 options 一起洗牌）；舊題庫或文章段落用 src/translate.ts 即時翻譯，結果快取在 localStorage
@@ -81,7 +81,7 @@
 - 回報有問題的題目：type "flag"／"unflag"（src/flags.ts），讀所有使用者的 log 依時間重播
 - 修正題（src/fixes.ts）：回報時請 AI 出同類型替代題，append 到 english/fixes/<deviceId>.jsonl（type "fix"，replaces 原 qid，新 UUID）；原題被回報時用修正題取代（同一題多個修正取最新），沒有修正就不出；恢復原題後修正題不出
 - 依原因處理（fixKind）：答案標錯→只改答案（AI 判斷原答案正確則自動 unflag）；兩個都對→換干擾選項；看不懂→重寫同一重點；翻譯或解釋有錯→只修中文，保留原 UUID（進度不變）；其他→依說明出替代題
-- 練習畫面頂端一直顯示目前使用者（共用 iPad 避免記錯人）
+- 練習畫面頂端一直顯示這場練習的使用者（共用 iPad 避免記錯人；v0.22.1 起是開始練習時的那個人，不是目前選的）
 - 同步：若自動同步正在跑，先等它結束再觸發一次
 - 克漏字打字比對：不分大小寫、忽略空白／彎引號／句尾標點；提示（字首、中文）算 hint
 
@@ -133,6 +133,26 @@
 ## 備份（src/backup.ts）
 - 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations、english/reports 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原（設定 →「從備份還原」，restoreBackup）：只補不蓋——缺少的檔案重建；.jsonl 依每行的 id 補回缺少的行；已存在的 .md 保留不動
+
+## v0.22.1 檢查後修正（2026-11-13，整份程式逐檔檢查；之後改這些地方要守住）
+- 誰的紀錄：練習（PracticeView.user）和對話（ChatView.cuser()＝對話檔的 user）在開始時記住使用者；作答、補批改、回報、複習到的字、加入句子本／生字本都用 `makeEntry(type, extra, user)`／`addPhrase(p, user)`／`addWord(…, lang, user)` 記在那個人身上。之前用「目前選的使用者」，練到一半在別的分頁換人就會記到別人的紀錄（補批改寫到別人檔案的話，那題永遠是 pending）
+- 同步等待（src/syncwait.ts 的 syncWithProbe）：「等它開始」的 3 秒要從觸發的時候算；之前從函式開始算，前面等自動同步超過 3 秒時，剛觸發的同步還沒開始就回報「已同步」
+- AI 呼叫 hedged：第一次很快失敗後馬上再送，只取消「再送一次」的計時器，整體逾時要留著（之前一起清掉，第二次卡住就永遠等下去）
+- 對話歷史 historyTurns：空白的訊息不送；視窗從學習者的訊息開始時不補開場指令（之前會黏在那則訊息前面）；從 AI 的訊息開始或沒有訊息才補
+- AI 回覆是空的（被截斷、被擋）：當作沒有回應、不存進對話（空白的 model 訊息留在歷史裡之後每次都可能被拒絕）；不完整的 JSON 用 salvageField 救出 reply／replyZh，不顯示大括號；日文對話 maxOutputTokens 2048（還有讀音、羅馬拼音）
+- 對話請求編號 reqSeq：等 AI 時結束對話或又開新的，回來的回覆只存回原本的對話檔，不畫到現在的畫面、不進新對話的歷史；sending 只由最新的請求改
+- 開新對話：starting 防連點；檔名同時看索引和磁碟；失敗用 Notice 提示。frontmatter 的 user 用 yamlName（像數字、true 的名字加引號），讀的時候一律 String()
+- Enter 送出：輸入法選字時不送（chatview.composing：isComposing 或 keyCode 229，Safari 選字的 Enter 沒有 isComposing）；克漏字輸入框也一樣（日文）
+- 練習：「下一題」按的時候才判斷是不是最後一題，drawQuestion 沒有題目就 finish（答錯後回報最後一題會壞掉）；假名卡片不放「回報」；start() 讀檔失敗回到開始畫面；補批改同一時間只跑一個（gradingPending）
+- 發音「最後點的才播」（pronounce.ts 的 wanted）：每次 pronounce／speakNatural 記下最後要聽的那一段，stopAudio 設成 null；語音從網路回來時如果已經不是最後要聽的就不播（錄音照樣存），也不改用系統語音補唸。字典錄音「拿到了但播不出來」不算字典掛掉（之前會停用字典一小時）
+- 錄音 WavRecorder.start 失敗（沒給麥克風權限）要關掉 AudioContext（iOS 同時只能開幾個）
+- 克漏字填答案一律用 generate.fillBlank（答案有 $ 時字串替換會出錯）；出題時「____ ____」併成一個空格，真的兩個空格的題目丟掉
+- 日文克漏字「答案標錯」的修正題：answerReading／answerRomaji 換成新答案的，AI 沒給就拿掉
+- 翻譯快取 translateMany 寫回前重新讀（同時進行的翻譯不互相蓋掉）；wordsToPrefetch 只讀一次快取
+- 主畫面只在 english/sources、bank、fixes 變動時重畫，300 毫秒內合併成一次（homeRelevant、renderSoon；之前每個錄音檔都整頁重畫）；生字本／句子本／統計／驗證面板畫到一半又被要求重畫時，畫完再畫一次（again）
+- 除錯紀錄 debug/<deviceId>.md 超過 30 萬字時只留最後 15 萬字（logs.trimDebugLog；啟動 90 秒後由 writer.rewrite 整理，排在同一個寫入佇列）
+- 設定頁「上次沒畫完」的判斷用 constants.settingsStepDone（cloud-modal:done 也算畫完）；數字欄位清空時不存成 0
+- 還原備份只寫回 BACKUP_ROOTS 底下；預先產生錄音的「新增」把 cloud 也算進去；同一時間的紀錄用 id 排序（生字本、句子本）
 
 ## 手機版面
 - iPhone 浮動導覽列（v0.21.2）：Obsidian 手機版下方的 .mobile-navbar 會蓋住外掛畫面底部（使用者回報對話的麥克風、送出被遮住）；src/navbar.ts 只在 Platform.isPhone 量導覽列高度＋CSS bottom＋8px，存成 body 的 --el-navbar-gap（resize、visualViewport、layout-change、每 2 秒；值沒變不動），styles.css 讓所有 english-learning-* 畫面的 .view-content 底部留這麼多；iPad、電腦是 0

@@ -71,10 +71,48 @@ export class AppendOnlyWriter {
 		return job;
 	}
 
+	/**
+	 * 改寫整個檔案（排在同一個佇列裡，不會和 append 交錯）。fn 回傳 null 或原文＝不改。
+	 * 只能用在這台裝置自己寫的檔案（單一寫入者）。
+	 */
+	rewrite(path: string, fn: (text: string) => string | null): Promise<boolean> {
+		const p = normalizePath(path);
+		const job = this.queue.then(async () => {
+			if (!(await this.app.vault.adapter.exists(p))) return false;
+			const f = this.app.vault.getAbstractFileByPath(p);
+			const text = f instanceof TFile ? await this.app.vault.read(f) : await this.app.vault.adapter.read(p);
+			const next = fn(text);
+			if (next === null || next === text) return false;
+			if (f instanceof TFile) await this.app.vault.modify(f, next);
+			else await this.app.vault.adapter.write(p, next);
+			return true;
+		});
+		this.queue = job.then(
+			() => undefined,
+			() => undefined,
+		);
+		return job;
+	}
+
 	/** 等前面排隊的寫入都完成。 */
 	flush(): Promise<void> {
 		return this.queue;
 	}
+}
+
+/** 除錯紀錄（debug/<deviceId>.md）超過這麼多字就整理，只留最後這麼多字。 */
+export const DEBUG_MAX = 300_000;
+export const DEBUG_KEEP = 150_000;
+
+/**
+ * 除錯紀錄太長時只留最後一段（從整行開始）；沒超過就原樣回傳。
+ * 這個檔每次同步都整個上傳，一直長下去會拖慢同步。
+ */
+export function trimDebugLog(text: string, max = DEBUG_MAX, keep = DEBUG_KEEP, now = new Date()): string {
+	if (text.length <= max) return text;
+	const cut = text.indexOf("\n", Math.max(0, text.length - keep));
+	const tail = cut < 0 ? text.slice(-keep) : text.slice(cut + 1);
+	return `- ${now.toISOString()} （較舊的除錯紀錄已清掉，只留最近的部分）\n${tail}`;
 }
 
 export function logPath(user: string, deviceId: string): string {

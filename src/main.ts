@@ -9,14 +9,16 @@ import {
 	LS_FALLBACK_KEY,
 	LS_FALLBACK_CLOUD_KEY,
 	LS_SETTINGS_STEP,
+	settingsStepDone,
 	LS_USER,
 	REMOTELY_SAVE_SYNC,
 	Settings,
 	VERIFY_VIEW,
 } from "./constants";
 import { Level } from "./generate";
-import { AppendOnlyWriter, DEBUG_ROOT, LOG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, uuid } from "./logs";
+import { AppendOnlyWriter, DEBUG_ROOT, LOG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, trimDebugLog, uuid } from "./logs";
 import { cloudMonth, readCloudUsage } from "./cloudtts";
+import { syncWithProbe } from "./syncwait";
 import { CloudTtsModal, ELSettingTab } from "./settings";
 import { bankPath, generateForSource, importArticle, resetSource, waitForStatus } from "./sources";
 import { HomeView, ImportModal, VerifyView } from "./views";
@@ -90,7 +92,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		});
 		// 上次設定頁沒畫完就當掉：記到除錯紀錄
 		const step = this.app.loadLocalStorage(LS_SETTINGS_STEP);
-		if (typeof step === "string" && step !== "done") {
+		if (typeof step === "string" && !settingsStepDone(step)) {
 			this.app.workspace.onLayoutReady(() => {
 				this.debug(`settings page did not finish last time (last step: ${step})`);
 				// 盡快同步，讓其他裝置（電腦）看得到這筆除錯紀錄
@@ -114,6 +116,11 @@ export default class EnglishLearningPlugin extends Plugin {
 					.then((r) => r && this.debug(`auto backup ${r.path}: ${r.files} files, ${Math.round(r.bytes / 1024)} KB`))
 					.catch((e) => this.debug(`auto backup failed: ${errMsg(e)}`));
 			}, 60_000);
+			this.register(() => window.clearTimeout(t));
+		});
+		// 除錯紀錄只留最近的部分（啟動 90 秒後整理一次；只整理這台裝置自己的檔）
+		this.app.workspace.onLayoutReady(() => {
+			const t = window.setTimeout(() => void this.trimDebug(), 90_000);
 			this.register(() => window.clearTimeout(t));
 		});
 		this.addCommand({ id: "backup", name: "立即備份", callback: () => this.backup() });
@@ -332,8 +339,13 @@ export default class EnglishLearningPlugin extends Plugin {
 	}
 
 	// ---------- log ----------
-	makeEntry(type: LogEntry["type"], extra: Record<string, unknown> = {}): LogEntry {
-		return this.entry(type, extra);
+	/**
+	 * user：記在哪一位使用者（預設是目前選的）。練習、對話進行到一半時，如果在別的分頁換了使用者，
+	 * 作答還是要記在開始的那個人身上，所以這兩個畫面會帶自己的使用者。
+	 */
+	makeEntry(type: LogEntry["type"], extra: Record<string, unknown> = {}, user?: string): LogEntry {
+		const e = this.entry(type, extra);
+		return user ? { ...e, user } : e;
 	}
 
 	appendLog(e: LogEntry): Promise<void> {
@@ -588,26 +600,15 @@ export default class EnglishLearningPlugin extends Plugin {
 		const started = Date.now();
 		const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 		const secs = () => Math.round((Date.now() - started) / 1000);
-		// 如果自動同步正在跑，先等它結束：它可能沒包含剛寫入的紀錄，所以結束後再同步一次
-		if (rs?.isSyncing) {
-			while (rs.isSyncing && Date.now() - started < maxMs) {
-				onStatus?.(`等待進行中的同步…（${secs()} 秒）`);
-				await sleep(300);
-			}
+		if (rs && typeof rs.isSyncing === "boolean") {
+			// 自動同步正在跑就先等它結束，再觸發一次並等到結束（src/syncwait.ts）
+			const r = await syncWithProbe(rs, () => this.triggerSync(true), { maxMs, onStatus });
+			if (r === "not-triggered") return false;
+			this.debug(`syncAndWait ${r} in ${secs()}s (isSyncing)`);
+			return r === "done";
 		}
 		const ok = await this.triggerSync(true);
 		if (!ok) return false;
-		if (rs && typeof rs.isSyncing === "boolean") {
-			// 等它開始（最多 3 秒），再等它結束
-			while (!rs.isSyncing && Date.now() - started < 3000) await sleep(100);
-			while (rs.isSyncing && Date.now() - started < maxMs) {
-				onStatus?.(`同步中…（${secs()} 秒）`);
-				await sleep(300);
-			}
-			const done = !rs.isSyncing;
-			this.debug(`syncAndWait ${done ? "done" : "timeout"} in ${secs()}s (isSyncing)`);
-			return done;
-		}
 		await sleep(1500);
 		while (Date.now() - started < maxMs) {
 			onStatus?.(`同步中…（${secs()} 秒）`);
@@ -685,15 +686,17 @@ export default class EnglishLearningPlugin extends Plugin {
 		return this.writer.append(file.path, text);
 	}
 
-	/** 加入句子本（寫在目前使用者的 log）。 */
-	async addPhrase(p: Omit<PhraseLog, "id" | "ts" | "device" | "user" | "type">): Promise<void> {
+	/** 加入句子本（預設寫在目前使用者的 log；對話中帶對話的使用者）。 */
+	async addPhrase(p: Omit<PhraseLog, "id" | "ts" | "device" | "user" | "type">, user?: string): Promise<void> {
 		const extra: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== "") extra[k] = v;
-		await this.appendLog(this.makeEntry("phrase-add", extra));
+		await this.appendLog(this.makeEntry("phrase-add", extra, user));
 	}
 
-	/** 加入生字本（寫在目前使用者的 log）。有網路時順便查好中文。 */
-	async addWord(word: string, context?: string, bank?: string, lang: Lang = this.lang): Promise<void> {
+	/** 加入生字本（預設寫在目前使用者的 log）。有網路時順便查好中文。 */
+	async addWord(word: string, context?: string, bank?: string, lang: Lang = this.lang, forUser?: string): Promise<void> {
+		// 先記住是誰：下面查中文、查原形要等幾秒，這中間換了使用者也不會記錯人
+		const user = forUser || this.user;
 		let meaning = cachedZh(this.app, word, lang);
 		if (!meaning && navigator.onLine !== false) {
 			try {
@@ -720,7 +723,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		if (meaning) extra.meaning = meaning;
 		if (context) extra.context = context;
 		if (bank) extra.bank = bank;
-		await this.appendLog(this.makeEntry("word-add", extra));
+		await this.appendLog(this.makeEntry("word-add", extra, user));
 		new Notice(`已加入生字本：${word}${meaning ? `（${meaning}）` : ""}`);
 	}
 
@@ -767,6 +770,15 @@ export default class EnglishLearningPlugin extends Plugin {
 	debug(msg: string) {
 		const line = `- ${new Date().toISOString()} ${msg.replace(/\n/g, " ⏎ ")}\n`;
 		this.writer.append(normalizePath(`${DEBUG_ROOT}/${this.deviceId}.md`), line).catch(() => undefined);
+	}
+
+	/** 除錯紀錄太長時只留最近的部分。 */
+	async trimDebug(): Promise<boolean> {
+		try {
+			return await this.writer.rewrite(normalizePath(`${DEBUG_ROOT}/${this.deviceId}.md`), (text) => trimDebugLog(text));
+		} catch {
+			return false; // 整理失敗沒關係，下次啟動再試
+		}
 	}
 
 	private fail(what: string, e: unknown) {

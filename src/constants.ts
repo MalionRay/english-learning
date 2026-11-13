@@ -7,6 +7,11 @@ export const LS_DEVICE_ID = "english-learning:device-id";
 export const LS_USER = "english-learning:user";
 export const LS_FALLBACK_KEY = "english-learning:fallback-api-key"; // 僅在沒有 SecretStorage 時使用
 export const LS_SETTINGS_STEP = "english-learning:settings-step"; // 設定頁畫到哪一段（當掉時找原因）
+
+/** 設定頁（或 Google Cloud 語音視窗）上次有沒有畫完："done" 或 "cloud-modal:done"。 */
+export function settingsStepDone(step: string): boolean {
+	return /(^|:)done$/.test(step);
+}
 export const LS_FALLBACK_CLOUD_KEY = "english-learning:fallback-cloud-key"; // 同上，Google Cloud 語音的金鑰
 
 export const REMOTELY_SAVE_SYNC = "remotely-save:start-sync";

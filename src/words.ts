@@ -7,7 +7,7 @@ import type { Bank, ChoiceQ, Question } from "./generate";
 import type { AnswerLog, GradeLog, QState } from "./srs";
 import { lemmaMap } from "./lemma";
 import { Lang, langOf, langTag, normWord } from "./lang";
-import { pronLabel } from "./generate";
+import { fillBlank, pronLabel } from "./generate";
 
 export const WORD_PREFIX = "word:";
 
@@ -72,7 +72,7 @@ export function questionWord(q: Question): { word: string; meaning?: string; ipa
 	if (q.type === "cloze") {
 		const cq = q as ChoiceQ;
 		const word = cq.options[cq.answer];
-		return { word, meaning: cq.optionsZh?.[cq.answer], context: cq.prompt.replace("____", word), contextZh: cq.promptZh };
+		return { word, meaning: cq.optionsZh?.[cq.answer], context: fillBlank(cq.prompt, word), contextZh: cq.promptZh };
 	}
 	return null;
 }
@@ -98,7 +98,7 @@ export function buildWordBookWithAliases(allBanks: Bank[], allLogs: (AnswerLog |
 	for (const b of banks) for (const q of b.questions) qmap.set(q.id, { q, bank: b });
 
 	const seen = new Set<string>();
-	const sorted = [...logs].filter((e) => e?.id && !seen.has(e.id) && seen.add(e.id)).sort((a, b) => (a.ts < b.ts ? -1 : 1));
+	const sorted = [...logs].filter((e) => e?.id && !seen.has(e.id) && seen.add(e.id)).sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const wrongWord = (e: AnswerLog | GradeLog | WordLog) => {
 		if (e.type !== "answer" || e.correct !== false || e.relearn || (e.qtype !== "vocab" && e.qtype !== "cloze")) return null;
 		const hit = qmap.get(e.qid);

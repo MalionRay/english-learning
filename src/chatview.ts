@@ -44,6 +44,11 @@ export type ChatVoice = "system" | "natural" | "off";
 const HEDGE_MS = 8000; // 超過 8 秒沒回應就再送一次
 const TIMEOUT_MS = 45000;
 
+/** 輸入法正在選字（注音、日文）：這時候的 Enter 是「確定選字」，不是送出。Safari 選字的 Enter 沒有 isComposing，但 keyCode 是 229。 */
+export function composing(e: KeyboardEvent): boolean {
+	return e.isComposing || e.keyCode === 229;
+}
+
 function localDate(d = new Date()): string {
 	const p = (n: number) => String(n).padStart(2, "0");
 	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -66,6 +71,8 @@ export class ChatView extends ItemView {
 	private pastMessages: ConvMessage[] = []; // 這位使用者最近幾次對話的訊息（估程度用）
 	private levelEl: HTMLElement | null = null;
 	private lastLevel: ChatLevel | null = null;
+	private starting = false; // 正在開新對話（防止連點）
+	private reqSeq = 0; // 送給 AI 的請求編號（結束對話時加一，還沒回來的回覆就作廢）
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -89,6 +96,14 @@ export class ChatView extends ItemView {
 
 	private level(): Level {
 		return this.plugin.levelOf(this.plugin.user);
+	}
+
+	/**
+	 * 這個對話是誰的（開始時記在對話檔）。聊到一半在別的分頁換了使用者，
+	 * 複習紀錄、加入句子本、生字本還是要記在開始對話的那個人身上。
+	 */
+	private cuser(): string {
+		return this.meta?.user || this.plugin.user;
 	}
 
 	/** 這次對話的語言：續聊用對話檔記的語言，新對話用目前選的語言。 */
@@ -200,7 +215,7 @@ export class ChatView extends ItemView {
 			.getMarkdownFiles()
 			.filter((f) => f.path.startsWith(CONV_DIR + "/"))
 			.map((f) => ({ f, fm: this.app.metadataCache.getFileCache(f)?.frontmatter ?? {} }))
-			.filter((x) => x.fm.user === p.user && langOf(x.fm.lang) === p.lang)
+			.filter((x) => String(x.fm.user ?? "") === p.user && langOf(x.fm.lang) === p.lang)
 			.sort((a, b) => (a.f.basename < b.f.basename ? 1 : -1))
 			.slice(0, 20);
 		if (convs.length) {
@@ -237,7 +252,7 @@ export class ChatView extends ItemView {
 		this.doneTargets = new Set();
 		if (!review) return;
 		try {
-			const d = await loadPractice(this.app, this.plugin.user, this.level(), this.clang());
+			const d = await loadPractice(this.app, this.cuser(), this.meta?.level ?? this.level(), this.clang());
 			for (const e of d.logs) if (e.type === "answer" && (e as AnswerLog).via === "chat" && (e as AnswerLog).session === convPath) this.doneTargets.add((e as AnswerLog).qid);
 			this.targets = pickTargets(d.words, d.phrases, d.states);
 		} catch (e) {
@@ -253,7 +268,7 @@ export class ChatView extends ItemView {
 				.getMarkdownFiles()
 				.filter((f) => f.path.startsWith(CONV_DIR + "/") && f.path !== exclude)
 				.map((f) => ({ f, fm: this.app.metadataCache.getFileCache(f)?.frontmatter ?? {} }))
-				.filter((x) => x.fm.user === this.plugin.user && langOf(x.fm.lang) === this.clang())
+				.filter((x) => String(x.fm.user ?? "") === this.cuser() && langOf(x.fm.lang) === this.clang())
 				.sort((a, b) => (String(a.fm.started ?? a.f.basename) < String(b.fm.started ?? b.f.basename) ? 1 : -1))
 				.slice(0, 3)
 				.reverse();
@@ -286,45 +301,71 @@ export class ChatView extends ItemView {
 		const p = this.plugin;
 		if (!p.getApiKey()) return new Notice("尚未設定 API key");
 		if (navigator.onLine === false) return new Notice("對話需要網路");
-		this.topic = topic;
-		this.article = await this.loadArticle(articlePath);
-		const now = new Date();
-		const lang = p.lang;
-		this.meta = { user: p.user, level: this.level(), ...(lang !== "en" ? { lang } : {}), topic: topic.id, topicLabel: topic.label, article: articlePath, device: p.deviceId, started: now.toISOString() };
-		// conversations/<日期>-<裝置>-<序號>.md：由開始的裝置獨佔寫入
-		const base = `${localDate(now)}-${p.deviceId}`;
-		let n = 1;
-		while (this.app.vault.getAbstractFileByPath(normalizePath(`${CONV_DIR}/${base}-${n}.md`))) n++;
-		const path = normalizePath(`${CONV_DIR}/${base}-${n}.md`);
-		if (!(await this.app.vault.adapter.exists(CONV_DIR))) await this.app.vault.createFolder(CONV_DIR).catch(() => undefined);
-		this.file = await this.app.vault.create(path, convHeader(this.meta));
-		const t0 = Date.now();
-		await Promise.all([this.loadTargets(review, path), this.loadPastMessages(path)]);
-		p.debug(`chat start: ${this.targets.length} review targets in ${Date.now() - t0} ms`);
-		this.messages = [];
-		this.lastLevel = null;
-		this.phase = "chat";
-		this.drawChat();
+		if (this.starting) return; // 連點兩下只開一個對話
+		this.starting = true;
+		try {
+			this.topic = topic;
+			this.article = await this.loadArticle(articlePath);
+			const now = new Date();
+			const lang = p.lang;
+			const meta: ConvMeta = { user: p.user, level: this.level(), ...(lang !== "en" ? { lang } : {}), topic: topic.id, topicLabel: topic.label, article: articlePath, device: p.deviceId, started: now.toISOString() };
+			// conversations/<日期>-<裝置>-<序號>.md：由開始的裝置獨佔寫入
+			const base = `${localDate(now)}-${p.deviceId}`;
+			const pathOf = (k: number) => normalizePath(`${CONV_DIR}/${base}-${k}.md`);
+			let n = 1;
+			// 檔案可能已經在磁碟上、但還沒進 Obsidian 的索引（剛同步下來）：兩邊都看
+			while (this.app.vault.getAbstractFileByPath(pathOf(n)) || (await this.app.vault.adapter.exists(pathOf(n)))) n++;
+			const path = pathOf(n);
+			if (!(await this.app.vault.adapter.exists(CONV_DIR))) await this.app.vault.createFolder(CONV_DIR).catch(() => undefined);
+			const file = await this.app.vault.create(path, convHeader(meta));
+			this.meta = meta;
+			this.file = file;
+			const t0 = Date.now();
+			await Promise.all([this.loadTargets(review, path), this.loadPastMessages(path)]);
+			p.debug(`chat start: ${this.targets.length} review targets in ${Date.now() - t0} ms`);
+			this.messages = [];
+			this.lastLevel = null;
+			this.phase = "chat";
+			this.drawChat();
+		} catch (e) {
+			new Notice(`無法開始對話：${(e as Error)?.message ?? e}`, 8000);
+			p.debug(`chat start failed: ${(e as Error)?.message ?? e}`);
+			return;
+		} finally {
+			this.starting = false;
+		}
 		await this.send(null); // AI 開場
 	}
 
 	private async resume(f: TFile, fm: ConvMeta, review = true) {
-		this.meta = { ...fm, level: fm.level === "kid" ? "kid" : "adult", lang: langOf(fm.lang) };
-		this.topic = TOPICS.find((t) => t.id === fm.topic) ?? TOPICS[0];
-		this.article = await this.loadArticle(fm.article);
-		this.file = f;
-		this.messages = parseConvMessages(await this.app.vault.read(f));
-		await Promise.all([this.loadTargets(review, f.path), this.loadPastMessages(f.path)]);
-		this.lastLevel = null;
-		this.phase = "chat";
-		this.drawChat();
-		for (const m of this.messages) this.renderMessage(m);
+		if (this.starting) return; // 正在開另一個對話（連點、或同時按了「開始對話」）
+		this.starting = true;
+		try {
+			// 名字像數字時 frontmatter 會被讀成數字：一律轉成文字
+			this.meta = { ...fm, user: String(fm.user ?? this.plugin.user), level: fm.level === "kid" ? "kid" : "adult", lang: langOf(fm.lang) };
+			this.topic = TOPICS.find((t) => t.id === fm.topic) ?? TOPICS[0];
+			this.article = await this.loadArticle(fm.article);
+			this.file = f;
+			this.messages = parseConvMessages(await this.app.vault.read(f));
+			await Promise.all([this.loadTargets(review, f.path), this.loadPastMessages(f.path)]);
+			this.lastLevel = null;
+			this.phase = "chat";
+			this.drawChat();
+			for (const m of this.messages) this.renderMessage(m);
+		} catch (e) {
+			this.meta = null;
+			this.file = null;
+			new Notice(`無法打開這個對話：${(e as Error)?.message ?? e}`, 8000);
+			this.plugin.debug(`chat resume failed: ${(e as Error)?.message ?? e}`);
+		} finally {
+			this.starting = false;
+		}
 	}
 
 	private drawChat() {
 		const el = this.root();
 		const top = el.createDiv({ cls: "el-row el-top" });
-		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.plugin.user}` });
+		top.createSpan({ cls: "el-user-badge", text: `👤 ${this.cuser()}` });
 		top.createSpan({ cls: "el-badge", text: this.topic.label });
 		this.levelEl = top.createSpan({ cls: "el-badge el-level-badge" });
 		this.levelEl.onclick = () => {
@@ -410,7 +451,7 @@ export class ChatView extends ItemView {
 		};
 		ta.addEventListener("keydown", (e) => {
 			// 電腦上 Enter 送出、Shift+Enter 換行（iPad 的螢幕鍵盤用送出鈕）
-			if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+			if (e.key === "Enter" && !e.shiftKey && !composing(e)) {
 				e.preventDefault();
 				send.click();
 			}
@@ -449,7 +490,7 @@ export class ChatView extends ItemView {
 					correct: true,
 					via: "chat",
 					...(this.clang() !== "en" ? { lang: this.clang() } : {}),
-				}),
+				}, this.cuser()),
 			);
 		}
 		this.listEl?.createDiv({ cls: "el-chat-reviewed", text: `✓ 複習到：${used.map((t) => (t.kind === "word" ? t.en : t.zh || t.en)).join("、")}` });
@@ -466,7 +507,7 @@ export class ChatView extends ItemView {
 			// 寫檔不用等（寫入佇列會照順序），先送給 AI
 			p.appendText(this.file, convBlock(um)).catch((e) => p.debug(`chat append failed: ${(e as Error)?.message ?? e}`));
 		}
-		await this.ask(historyTurns(this.messages, this.plugin.chatMemoryOf(this.plugin.user)), text, null);
+		await this.ask(historyTurns(this.messages, this.plugin.chatMemoryOf(this.cuser())), text, null);
 	}
 
 	/** 語音訊息：錄音直接送給 AI，AI 聽寫（heard）後照平常回覆，只呼叫一次。 */
@@ -474,7 +515,7 @@ export class ChatView extends ItemView {
 		if (!this.meta || !this.file || this.sending) return;
 		const bubble = this.listEl?.createDiv({ cls: "el-bubble el-bubble-user is-voice", text: "🎤 語音訊息…" }) ?? null;
 		bubble?.scrollIntoView({ block: "end" });
-		const turns: ChatTurn[] = historyTurns(this.messages, this.plugin.chatMemoryOf(this.plugin.user));
+		const turns: ChatTurn[] = historyTurns(this.messages, this.plugin.chatMemoryOf(this.cuser()));
 		const audio = { mimeType: "audio/wav", data: arrayBufferToBase64(wav) };
 		const last = turns[turns.length - 1];
 		if (last?.role === "user") {
@@ -489,6 +530,7 @@ export class ChatView extends ItemView {
 		if (!this.meta || !this.file) return;
 		const file = this.file;
 		this.sending = true;
+		const req = ++this.reqSeq; // 這次請求的編號：等 AI 的時候對話結束或又開了新的，回來的回覆就不算數
 		const t0 = Date.now();
 		const label = voiceBubble ? "AI 聽你說…" : "AI 輸入中…";
 		const typing = this.listEl?.createDiv({ cls: "el-chat-typing", text: label });
@@ -504,16 +546,29 @@ export class ChatView extends ItemView {
 					levelPrompt(this.levelEstimate(), this.meta.level, this.clang()) +
 					targetsPrompt(this.activeTargets(), this.meta.level, this.clang()),
 				json: true,
-				maxOutputTokens: 1024,
+				// 日文的回覆還帶平假名和羅馬拼音，1024 偶爾不夠（會被截斷）
+				maxOutputTokens: this.clang() === "ja" ? 2048 : 1024,
 				temperature: 0.9,
 				hedgeAfterMs: voiceBubble ? HEDGE_MS + 4000 : HEDGE_MS,
 				timeoutMs: TIMEOUT_MS,
 			});
 			const ms = Date.now() - t0;
+			const reply = parseReply(res.text);
+			if (req !== this.reqSeq || this.file !== file) {
+				// 等 AI 的時候這個對話已經結束（或開了新的對話）：回覆存回原本的對話檔，
+				// 但不能畫到現在的畫面、也不能放進新對話的歷史
+				if (!voiceBubble && (reply.reply || reply.correction || reply.howto.length))
+					await p.appendText(file, convBlock({ role: "model", text: res.text, ts: new Date().toISOString() })).catch(() => undefined);
+				return;
+			}
+			const heard = voiceBubble ? parseHeard(res.text) : null;
+			// AI 沒回內容（被截斷、被擋、空白）：當作沒有回應，不存進對話。
+			// 空白的 AI 訊息留在歷史裡，之後每次送出都可能被 Google 拒絕
+			if (!reply.reply && !reply.correction && !reply.howto.length && !(voiceBubble && !heard))
+				throw new Error(res.finishReason === "MAX_TOKENS" ? "AI 的回覆太長被截斷了" : `AI 回了空白的內容${res.finishReason && res.finishReason !== "STOP" ? `（${res.finishReason}）` : ""}`);
 			typing?.remove();
 			let learnerText = typed;
 			if (voiceBubble) {
-				const heard = parseHeard(res.text);
 				if (!heard) {
 					voiceBubble.setText("🎤 沒聽清楚，請再說一次（或改用打字）");
 					voiceBubble.addClass("is-failed");
@@ -527,7 +582,6 @@ export class ChatView extends ItemView {
 			}
 			const mm: ConvMessage = { role: "model", text: res.text, ts: new Date().toISOString() };
 			this.messages.push(mm);
-			const reply = parseReply(res.text);
 			this.renderMessage(mm, reply);
 			this.drawLevel();
 			this.speakReply(reply.reply);
@@ -539,9 +593,10 @@ export class ChatView extends ItemView {
 			await p.appendText(file, convBlock(mm));
 			await this.savePhrases(reply);
 			if (learnerText !== null) await this.recordUsed(learnerText, res.text, !!reply.correction);
-			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage, ms, ...(voiceBubble ? { voice: true, seconds: voiceSeconds } : {}) })).catch(() => undefined);
+			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage, ms, ...(voiceBubble ? { voice: true, seconds: voiceSeconds } : {}) }, this.cuser())).catch(() => undefined);
 			if (ms > 8000) p.debug(`chat slow: ${ms} ms (in ${res.usage.inputTokens ?? "?"} / out ${res.usage.outputTokens ?? "?"} tokens${voiceBubble ? ", voice" : ""})`);
 		} catch (e) {
+			if (req !== this.reqSeq) return; // 對話已經結束：不用再提示
 			typing?.setText(`AI 沒有回應：${(e as Error)?.message ?? e}（${voiceBubble ? "請再說一次" : "可以再送一次"}）`);
 			if (voiceBubble) {
 				voiceBubble.setText("🎤（沒有送出）");
@@ -551,7 +606,7 @@ export class ChatView extends ItemView {
 			p.debug(`chat failed after ${Date.now() - t0} ms: ${(e as Error)?.message ?? e}${body}`);
 		} finally {
 			clearInterval(tick);
-			this.sending = false;
+			if (req === this.reqSeq) this.sending = false; // 已經有更新的請求（新對話的開場）就不要動它的狀態
 		}
 	}
 
@@ -614,9 +669,9 @@ export class ChatView extends ItemView {
 		const tag = lang !== "en" ? { lang } : {};
 		if (r.correction && r.correction.zh) {
 			const c = r.correction;
-			await p.addPhrase({ key: phraseKey(c.corrected, lang), zh: c.zh, en: c.corrected, note: c.explanation, source: "correction", original: c.original, conv, ...tag });
+			await p.addPhrase({ key: phraseKey(c.corrected, lang), zh: c.zh, en: c.corrected, note: c.explanation, source: "correction", original: c.original, conv, ...tag }, this.cuser());
 		}
-		for (const h of r.howto) await p.addPhrase({ key: phraseKey(h.en, lang), zh: h.zh, en: h.en, alt: h.alt, note: h.note, source: "howto", conv, ...tag });
+		for (const h of r.howto) await p.addPhrase({ key: phraseKey(h.en, lang), zh: h.zh, en: h.en, alt: h.alt, note: h.note, source: "howto", conv, ...tag }, this.cuser());
 	}
 
 	private renderMessage(m: ConvMessage, reply?: ChatReply) {
@@ -685,7 +740,7 @@ export class ChatView extends ItemView {
 				return;
 			}
 			box.style.display = "";
-			box.setText(zh ?? cachedZh(this.app, text, lang) ?? "翻譯中…");
+			box.setText(zh || cachedZh(this.app, text, lang) || "翻譯中…");
 			if (!zh && !cachedZh(this.app, text, lang)) {
 				try {
 					box.setText((await translateMany(this.app, this.plugin.fastBackend(), [text], lang))[0]);
@@ -703,7 +758,7 @@ export class ChatView extends ItemView {
 		menu.addItem((i) =>
 			i.setTitle("看中文意思").onClick(() => inlineMeaning(this.app, () => this.plugin.fastBackend(), word, evt.target instanceof HTMLElement ? evt.target : null, lang)),
 		);
-		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence, undefined, lang)));
+		menu.addItem((i) => i.setTitle("＋ 加入生字本").onClick(() => this.plugin.addWord(word, sentence, undefined, lang, this.cuser())));
 		menu.showAtMouseEvent(evt);
 	}
 
@@ -717,6 +772,8 @@ export class ChatView extends ItemView {
 		this.recorder?.cancel();
 		this.recorder = null;
 		this.stopVoice();
+		this.reqSeq++; // 還在等的 AI 回覆作廢
+		this.sending = false;
 		const fixes = this.messages.filter((m) => m.role === "model").map((m) => parseReply(m.text));
 		const nFix = fixes.filter((r) => r.correction).length;
 		const nHow = fixes.reduce((n, r) => n + r.howto.length, 0);

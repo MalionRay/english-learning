@@ -93,6 +93,13 @@ const SILENT_WAV =
 	"data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
 let player: HTMLAudioElement | null = null;
 let currentUrl: string | null = null;
+/**
+ * 使用者最後要聽的是哪一段（錄音的 key，或自然語音的編號）；null＝按了停止。
+ * 語音要上網拿，可能幾秒後才回來：這時使用者如果已經點了別的（或按了停止），舊的就不播了，
+ * 不然會蓋掉正在聽的那一段。
+ */
+let wanted: string | null = null;
+let naturalSeq = 0;
 
 /** 一定要在 click handler 裡同步呼叫。 */
 export function unlockAudio() {
@@ -105,8 +112,9 @@ export function unlockAudio() {
 	}
 }
 
-/** 停止正在播放的錄音。 */
+/** 停止正在播放的錄音（還在路上的也不播了）。 */
 export function stopAudio() {
+	wanted = null;
 	try {
 		player?.pause();
 	} catch {
@@ -373,6 +381,7 @@ export class Pronouncer {
 		const t = normalizeSpeech(text);
 		if (!t) return "system";
 		const key = audioKey(t, opts.lang);
+		wanted = key; // 最後點的這一段才播
 		const running = this.inflight.get(key);
 		if (running && !opts.forceGemini && !opts.rate) return running;
 		const job = this.run(t, key, opts).finally(() => this.inflight.delete(key));
@@ -410,13 +419,26 @@ export class Pronouncer {
 		const rate = opts.rate ?? 1;
 		const lang = opts.lang ?? "en";
 		const s = this.d.settings();
+		// 這一段還是不是使用者最後要聽的：之後又點了別的、或按了停止，就不播（拿到的錄音照樣存起來）
+		const stale = () => wanted !== key;
+		// 先播放再存檔，少等一點。被後來的聲音打斷不算錯（不要再用別的語音補唸一次舊的）
+		const play = async (data: ArrayBuffer, mime: string, save?: () => Promise<void>) => {
+			const playing = stale() ? Promise.resolve() : playBuffer(data, mime, rate);
+			playing.catch(() => undefined); // 存檔時先不要變成「沒人處理的錯誤」
+			if (save) await save();
+			try {
+				await playing;
+			} catch (e) {
+				if (!stale()) throw e;
+			}
+		};
 		// 1. 已存的錄音
 		if (!opts.forceGemini) {
 			for (const path of this.index.get(key) ?? []) {
 				const f = this.d.app.vault.getAbstractFileByPath(path);
 				if (!(f instanceof TFile)) continue;
 				try {
-					await playBuffer(await this.d.app.vault.readBinary(f), mimeFor(path), rate);
+					await play(await this.d.app.vault.readBinary(f), mimeFor(path));
 					return "cache";
 				} catch (e) {
 					this.d.debug(`play cache failed ${path}: ${(e as Error)?.name ?? e}`);
@@ -425,44 +447,44 @@ export class Pronouncer {
 		}
 		// 2. 字典真人錄音（單字）
 		if (!opts.forceGemini && lang === "en" && s.dictAudio && isSingleWord(text) && !this.dictMissed(text) && Date.now() > this.dictDownUntil) {
+			let got: ArrayBuffer | null = null;
 			try {
-				const got = await this.fetchDict(text);
-				if (got) {
-					// 先播放再存檔，少等一點
-					const playing = playBuffer(got, "audio/mpeg", rate);
-					await this.save(key, "mp3", got);
-					this.d.log("dict", { text });
-					await playing;
-					return "dict";
-				}
-				this.markDictMiss(text);
+				got = await this.fetchDict(text);
+				if (!got) this.markDictMiss(text);
 			} catch (e) {
 				this.dictDownUntil = Date.now() + 3600_000;
 				this.d.debug(`dict failed ${text}: ${(e as Error)?.message ?? e}（一小時內不再嘗試字典）`);
 			}
+			if (got) {
+				const mp3 = got;
+				this.d.log("dict", { text });
+				try {
+					await play(mp3, "audio/mpeg", () => this.save(key, "mp3", mp3));
+					return "dict";
+				} catch (e) {
+					// 錄音拿到了但播不出來：不是字典掛了（之前會因此停用字典一小時），往下試其他語音
+					this.d.debug(`play dict failed ${text}: ${(e as Error)?.name ?? e}`);
+				}
+			}
 		}
 		// 3. Google Cloud 語音（Chirp 3 HD）
-		if (!opts.forceGemini) {
+		if (!opts.forceGemini && !stale()) {
 			const mp3 = await this.fetchCloud(text, opts.noSave ? { noSave: true } : {}, lang);
 			if (mp3) {
-				const playing = playBuffer(mp3, "audio/mpeg", rate);
-				if (!opts.noSave) await this.save(key, "mp3", mp3);
-				await playing;
+				await play(mp3, "audio/mpeg", opts.noSave ? undefined : () => this.save(key, "mp3", mp3));
 				return "cloud";
 			}
 		}
-		// 4. Gemini 語音
-		if (s.geminiTts && this.quotaOk(s)) {
+		// 4. Gemini 語音（已經不用播了就不花額度）
+		if (s.geminiTts && (!stale() || opts.forceGemini) && this.quotaOk(s)) {
 			try {
 				const wav = await this.fetchGemini(text, s);
 				const q = loadQuota(this.d.app);
 				q.count++;
 				saveQuota(this.d.app, q);
-				// 先播放再存檔，少等一點；對話回覆這類一次性的句子不存（noSave）
-				const playing = playBuffer(wav, "audio/wav", rate);
-				if (!opts.noSave) await this.save(key, "wav", wav);
 				this.d.log("gemini", { text: text.slice(0, 200), model: s.ttsModel, voice: s.ttsVoice, bytes: wav.byteLength, todayCount: q.count, ...(opts.noSave ? { noSave: true } : {}) });
-				await playing;
+				// 對話回覆這類一次性的句子不存（noSave）
+				await play(wav, "audio/wav", opts.noSave ? undefined : () => this.save(key, "wav", wav));
 				return "gemini";
 			} catch (e) {
 				if (e instanceof AIError && e.status === 429) {
@@ -474,7 +496,7 @@ export class Pronouncer {
 			}
 		}
 		// 5. 系統語音
-		await this.d.systemSpeak(text, opts.rate, lang);
+		if (!stale()) await this.d.systemSpeak(text, opts.rate, lang);
 		return "system";
 	}
 
@@ -589,19 +611,33 @@ export class Pronouncer {
 		const t = normalizeSpeech(text);
 		this.interactiveUntil = Date.now() + 5 * 60_000;
 		if (!t) return false;
+		// 這一段變成「最後要聽的」；之後使用者又點了別的字或句子，這段剩下的就不唸了
+		const token = `natural:${++naturalSeq}`;
+		wanted = token;
+		const stopped = () => isStopped() || wanted !== token;
+		const playPart = async (data: ArrayBuffer, mime: string): Promise<boolean> => {
+			try {
+				await playToEnd(data, mime);
+				return true;
+			} catch (e) {
+				if (stopped()) return false; // 被後來的聲音打斷
+				throw e;
+			}
+		};
 		// Google Cloud 語音：切成第一句與其他，同時產生，第一句先唸
 		if (s.cloudTts && (await this.cloudReady(t))) {
 			const jobs = splitForSpeech(t).map((part) => this.fetchCloud(part, { noSave: true }, lang));
 			let played = false;
 			for (const job of jobs) {
 				const mp3 = await job;
-				if (isStopped()) return true;
+				if (stopped()) return true;
 				if (!mp3) break; // 失敗：沒唸過就往下試 Gemini，唸過一半就算了
-				await playToEnd(mp3, "audio/mpeg");
+				if (!(await playPart(mp3, "audio/mpeg"))) return true;
 				played = true;
 			}
 			if (played) return true;
 		}
+		if (stopped()) return true;
 		const parts = s.ttsDailyCap > 20 ? splitForSpeech(t) : [t];
 		if (!s.geminiTts) return false;
 		if (!this.quotaOk(s)) {
@@ -627,9 +663,9 @@ export class Pronouncer {
 		let played = false;
 		for (const job of jobs) {
 			const wav = await job;
-			if (isStopped()) return true;
+			if (stopped()) return true;
 			if (!wav) return played; // 後半失敗：前半已經唸了就算了
-			await playToEnd(wav, "audio/wav");
+			if (!(await playPart(wav, "audio/wav"))) return true;
 			played = true;
 		}
 		return played;

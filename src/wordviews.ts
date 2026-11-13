@@ -86,11 +86,19 @@ export class WordsView extends ItemView {
 		this.render();
 	}
 
+	/** 正在畫的時候又被要求重畫（換了使用者或語言）：畫完再畫一次，不要停在舊的內容。 */
+	private again = false;
 	async render() {
-		if (this.busy) return;
+		if (this.busy) {
+			this.again = true;
+			return;
+		}
 		this.busy = true;
 		try {
-			await this.draw();
+			do {
+				this.again = false;
+				await this.draw();
+			} while (this.again);
 		} finally {
 			this.busy = false;
 		}
@@ -111,7 +119,7 @@ export class WordsView extends ItemView {
 			cls: "el-muted",
 			text: `${LANG[lang].name}：共 ${words.length} 個字。來源：文章標記的生字、答錯過的字、練習時點字加入的字。到「練習 → 生字複習」可以複習。`,
 		});
-		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: "搜尋英文或中文" } });
+		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: `搜尋${LANG[p.lang].name}或中文` } });
 		search.value = this.filter;
 		const list = el.createDiv();
 		const draw = () => {
@@ -171,11 +179,19 @@ export class StatsView extends ItemView {
 		this.render();
 	}
 
+	/** 正在畫的時候又被要求重畫（換了使用者或語言）：畫完再畫一次，不要停在舊的內容。 */
+	private again = false;
 	async render() {
-		if (this.busy) return;
+		if (this.busy) {
+			this.again = true;
+			return;
+		}
 		this.busy = true;
 		try {
-			await this.draw();
+			do {
+				this.again = false;
+				await this.draw();
+			} while (this.again);
 		} finally {
 			this.busy = false;
 		}
@@ -272,11 +288,19 @@ export class PhrasesView extends ItemView {
 		this.render();
 	}
 
+	/** 正在畫的時候又被要求重畫（換了使用者或語言）：畫完再畫一次，不要停在舊的內容。 */
+	private again = false;
 	async render() {
-		if (this.busy) return;
+		if (this.busy) {
+			this.again = true;
+			return;
+		}
 		this.busy = true;
 		try {
-			await this.draw();
+			do {
+				this.again = false;
+				await this.draw();
+			} while (this.again);
 		} finally {
 			this.busy = false;
 		}
@@ -292,15 +316,15 @@ export class PhrasesView extends ItemView {
 		const lang = p.lang;
 		const d = await loadPractice(this.app, p.user, "all", lang);
 		const items = d.phrases;
-		el.createDiv({ cls: "el-muted", text: `${LANG[lang].name}：共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法、錯誤分析的練習句，以及答錯的克漏字、翻譯、聽力句子。到「練習 → 句子」可以複習，英文對話也會自然用到到期的句子。` });
-		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: "搜尋中文或英文" } });
+		el.createDiv({ cls: "el-muted", text: `${LANG[lang].name}：共 ${items.length} 句。來源：對話中被糾正的句子、問過「怎麼說」的說法、錯誤分析的練習句，以及答錯的克漏字、翻譯、聽力句子。到「練習 → 句子」可以複習，對話時也會自然用到到期的句子。` });
+		const search = el.createEl("input", { cls: "el-cloze-input", attr: { type: "search", placeholder: `搜尋中文或${LANG[p.lang].name}` } });
 		search.value = this.filter;
 		const list = el.createDiv();
 		const draw = () => {
 			list.empty();
 			const f = this.filter.trim().toLowerCase();
 			const shown = items.filter((x) => !f || x.en.toLowerCase().includes(f) || x.zh.includes(f));
-			if (!shown.length) list.createDiv({ cls: "el-muted", text: items.length ? "沒有符合的句子" : "還沒有句子。到「英文對話」聊聊看吧。" });
+			if (!shown.length) list.createDiv({ cls: "el-muted", text: items.length ? "沒有符合的句子" : `還沒有句子。到「${LANG[lang].name}對話」聊聊看吧。` });
 			drawSplit(list, shown, (x) => bookStatus(d.states.get(phraseQid(x.key))), !!f, (parent, x, status) => {
 				const st = d.states.get(phraseQid(x.key));
 				const card = parent.createDiv({ cls: `el-card el-word-card is-${status}` });

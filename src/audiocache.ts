@@ -2,6 +2,7 @@
 // 錄音是可重建的快取（english/audio/<deviceId>/<hash>），所以清除時可以刪任何裝置資料夾裡的檔案。
 import { App, TFile } from "obsidian";
 import type { Bank, ChoiceQ, Question } from "./generate";
+import { fillBlank } from "./generate";
 import { AUDIO_DIR, Pronouncer, audioKey, normalizeSpeech } from "./pronounce";
 import { DICT_PREFIX } from "./dictation";
 import { WORD_PREFIX, wordKey } from "./words";
@@ -42,7 +43,7 @@ export function audioTextsOf(q: Question, lang: Lang = "en"): AudioText[] {
 	} else if (q.type === "cloze") {
 		const c = q as ChoiceQ;
 		word(c.options[c.answer]);
-		sentence(c.prompt.replace("____", c.options[c.answer]));
+		sentence(fillBlank(c.prompt, c.options[c.answer]));
 	} else if (q.type === "translate") {
 		sentence(q.reference);
 	}
@@ -84,7 +85,7 @@ export async function prefetchAudio(
 		if (shouldStop?.()) break;
 		if (typeof navigator !== "undefined" && navigator.onLine === false) break;
 		const r = await pron.ensure(todo[i].text, todo[i].lang);
-		if (r === "dict" || r === "gemini") res.made++;
+		if (r === "dict" || r === "cloud" || r === "gemini") res.made++;
 		if (r === "quota") {
 			res.stoppedByQuota = true;
 			break;

@@ -1,6 +1,7 @@
 // 英文對話：提示詞、回覆格式、對話檔、句子本。這個檔案不碰 Vault（除了型別），方便測試。
 import type { ChatTurn } from "./ai";
 import type { ChoiceQ, Level, Question, TranslateQ } from "./generate";
+import { fillBlank } from "./generate";
 import { audioKey } from "./pronounce";
 import { LANG, Lang, langOf, learnerLine, normSentence, persona } from "./lang";
 
@@ -158,14 +159,30 @@ function str(v: unknown): string {
 	return typeof v === "string" ? v.trim() : "";
 }
 
+/** 從不完整的 JSON 文字裡取出某個字串欄位（取不到回傳空字串；字串本身沒寫完也盡量取）。 */
+export function salvageField(text: string, field: string): string {
+	const m = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)("?)`).exec(text);
+	if (!m) return "";
+	const body = m[2] ? m[1] : m[1].replace(/\\[^"\\/bfnrtu]?$|\\u[0-9a-fA-F]{0,3}$/, ""); // 沒寫完：去掉尾巴半個跳脫字元
+	try {
+		return String(JSON.parse(`"${body}"`)).trim();
+	} catch {
+		return body.replace(/\\n/g, " ").replace(/\\(.)/g, "$1").trim();
+	}
+}
+
 export function parseReply(text: string): ChatReply {
 	let j: Record<string, unknown>;
+	const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
 	try {
-		j = JSON.parse(text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+		j = JSON.parse(cleaned);
 	} catch {
+		// 看起來是 JSON 但不完整（回覆被截斷）：把 "reply" 救出來，不要把一堆大括號顯示給學習者
+		if (/^\s*\{/.test(cleaned)) return { correction: null, howto: [], reply: salvageField(cleaned, "reply"), replyZh: salvageField(cleaned, "replyZh") };
 		// 模型偶爾直接回純文字：當作一般回覆
 		return { correction: null, howto: [], reply: text.trim(), replyZh: "" };
 	}
+	if (!j || typeof j !== "object" || Array.isArray(j)) return { correction: null, howto: [], reply: typeof j === "string" ? (j as string).trim() : "", replyZh: "" };
 	const c = j.correction as Record<string, unknown> | null | undefined;
 	const correction: Correction | null =
 		c && str(c.corrected) && str(c.original) && str(c.corrected).toLowerCase() !== str(c.original).toLowerCase()
@@ -210,10 +227,18 @@ export interface ConvMessage {
 	voice?: boolean; // 用麥克風說的
 }
 
+/**
+ * frontmatter 裡的使用者名字：像數字或 true／null 的名字（例如 "2026"、"no"）要加引號，
+ * 不然 YAML 會讀成數字或布林，之後就對不上這位使用者。
+ */
+export function yamlName(name: string): string {
+	return /^[a-z_][a-z0-9_-]*$/i.test(name) && !/^(true|false|null|yes|no|on|off|y|n)$/i.test(name) ? name : JSON.stringify(name);
+}
+
 export function convHeader(m: ConvMeta): string {
 	return [
 		"---",
-		`user: ${m.user}`,
+		`user: ${yamlName(m.user)}`,
 		`level: ${m.level}`,
 		...(m.lang && m.lang !== "en" ? [`lang: ${m.lang}`] : []),
 		`topic: ${m.topic}`,
@@ -267,15 +292,19 @@ export function parseConvMessages(md: string): ConvMessage[] {
 
 /** 送給 AI 的歷史：開場指令 + 最近 N 則（N＝使用者的「對話記憶長度」；0＝整段對話）。 */
 export function historyTurns(messages: ConvMessage[], max = 50): ChatTurn[] {
-	const recent = max > 0 ? messages.slice(-max) : messages;
-	const turns: ChatTurn[] = [{ role: "user", text: OPENING }];
+	// 空的訊息（以前 AI 沒回內容時留下的）不送：空白的內容會讓整個請求被拒絕
+	const usable = messages.filter((m) => typeof m?.text === "string" && m.text.trim());
+	const recent = max > 0 ? usable.slice(-max) : usable;
+	const turns: ChatTurn[] = [];
 	for (const m of recent) {
 		// Gemini 要求 user/model 交替：合併連續同角色
 		const last = turns[turns.length - 1];
-		if (last.role === m.role) last.text += `\n${m.text}`;
+		if (last && last.role === m.role) last.text += `\n${m.text}`;
 		else turns.push({ role: m.role, text: m.text });
 	}
-	if (turns[0].role === "user" && turns[1]?.role === "user") turns.splice(0, 1);
+	// 第一則必須是 user：還沒有訊息、或這段歷史從 AI 的訊息開始時，前面補上開場指令。
+	// 從學習者的訊息開始就不用補（之前會把開場指令和那則訊息黏在一起，AI 可能又打一次招呼）
+	if (!turns.length || turns[0].role === "model") turns.unshift({ role: "user", text: OPENING });
 	return turns;
 }
 
@@ -345,7 +374,7 @@ export function failedSentenceMap(
 			const c = q as ChoiceQ;
 			const ans = c.options[c.answer];
 			if (!ans || !c.prompt.includes("____")) continue;
-			m.set(q.id, { en: c.prompt.replace("____", ans).replace(/\s+/g, " ").trim(), zh: c.promptZh ?? "", note: c.explanation, source: "cloze", bank: bank.sourceId, lang: langOf(bank.lang) });
+			m.set(q.id, { en: fillBlank(c.prompt, ans).replace(/\s+/g, " ").trim(), zh: c.promptZh ?? "", note: c.explanation, source: "cloze", bank: bank.sourceId, lang: langOf(bank.lang) });
 		} else if (q.type === "translate") {
 			const t = q as TranslateQ;
 			if (t.reference && t.prompt) m.set(q.id, { en: t.reference, zh: t.prompt, note: t.explanation, source: "translate", bank: bank.sourceId, lang: langOf(bank.lang) });
@@ -378,7 +407,7 @@ export function buildPhraseBook(logs: { type: string; ts: string; id: string }[]
 				((e.type === "phrase-add" || e.type === "phrase-remove") && langOf((e as PhraseLog).lang) === lang) ||
 				((e.type === "answer" || e.type === "grade") && e.correct === false && !("relearn" in e && e.relearn) && failed.get(e.qid)?.lang === lang),
 		)
-		.sort((a, b) => (a.ts < b.ts ? -1 : 1));
+		.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const items = new Map<string, PhraseItem>();
 	for (const e of list) {
 		if (e.type === "phrase-remove") items.delete(e.key);

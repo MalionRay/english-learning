@@ -1,7 +1,7 @@
 {
   "id": "english-learning",
   "name": "Language Learning",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "minAppVersion": "1.11.4",
   "description": "Language learning (English, Spanish, Japanese): article import, AI questions, spaced review, conversation practice, multi-device sync.",
   "author": "MalionRay",

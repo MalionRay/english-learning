@@ -62,14 +62,16 @@ export async function translateMany(app: App, ai: AIBackend, texts: string[], la
 			throw new Error("翻譯結果格式不對");
 		}
 		if (!Array.isArray(arr)) throw new Error("翻譯結果格式不對");
+		// 等 AI 的這段時間，別的翻譯（背景預查、點字）可能已經寫過快取：重新讀再加上去，才不會互相蓋掉
+		const latest = load(app);
 		todo.forEach((x, k) => {
 			const zh = typeof arr[k] === "string" ? (arr[k] as string).trim() : "";
 			if (zh) {
 				out[x.i] = zh;
-				cache[zhKey(x.t, lang)] = zh;
+				latest[zhKey(x.t, lang)] = zh;
 			}
 		});
-		save(app, cache);
+		save(app, latest);
 	}
 	return out;
 }
@@ -141,13 +143,14 @@ function trivialJa(w: string): boolean {
 /** 一段外語裡值得預先查中文的字（去重、跳過常見字與已查過的）。 */
 export function wordsToPrefetch(app: App, text: string, max = 30, lang: Lang = "en"): string[] {
 	const out: string[] = [];
+	const cache = load(app); // 只讀一次（之前每個字都重新讀、重新解析整份快取）
 	if (lang !== "en") {
 		for (const t of tokenize(text, lang)) {
 			if (!t.word) continue;
 			const w = lang === "ja" ? t.text.trim() : normWord(t.text, lang);
 			if (lang === "ja" ? trivialJa(w) : w.length < 3 || COMMON_ES.has(w)) continue;
 			// 點字時查的是畫面上的原字，快取也用原字
-			if (out.includes(t.text) || cachedZh(app, t.text, lang)) continue;
+			if (out.includes(t.text) || cache[zhKey(t.text, lang)]) continue;
 			out.push(t.text);
 			if (out.length >= max) break;
 		}
@@ -155,7 +158,7 @@ export function wordsToPrefetch(app: App, text: string, max = 30, lang: Lang = "
 	}
 	for (const m of text.toLowerCase().replace(/[’‘]/g, "'").match(/[a-z][a-z'-]*[a-z]|[a-z]/g) ?? []) {
 		const w = m.replace(/'s$/, "");
-		if (w.length < 3 || COMMON.has(w) || out.includes(w) || cachedZh(app, w)) continue;
+		if (w.length < 3 || COMMON.has(w) || out.includes(w) || cache[zhKey(w, "en")]) continue;
 		out.push(w);
 		if (out.length >= max) break;
 	}

@@ -40,7 +40,8 @@ export class ELSettingTab extends PluginSettingTab {
 			.addText((t) =>
 				t.setValue(String(p.settings.newPerDay)).onChange(async (v) => {
 					const n = Math.max(0, Math.min(500, Math.floor(Number(v))));
-					if (Number.isFinite(n)) {
+					// 欄位清空（正要打新的數字）不算 0：0 是「不限」
+					if (v.trim() !== "" && Number.isFinite(n)) {
 						p.settings.newPerDay = n;
 						await p.saveSettings();
 					}
@@ -196,7 +197,7 @@ export class ELSettingTab extends PluginSettingTab {
 			.addText((t) =>
 				t.setValue(String(p.settings.ttsDailyCap)).onChange(async (v) => {
 					const n = Math.max(0, Math.min(10000, Math.floor(Number(v))));
-					if (Number.isFinite(n)) {
+					if (v.trim() !== "" && Number.isFinite(n)) {
 						p.settings.ttsDailyCap = n;
 						await p.saveSettings();
 					}
@@ -384,7 +385,7 @@ export class CloudTtsModal extends Modal {
 			.addText((t) =>
 				t.setValue(String(p.settings.cloudMonthlyCap)).onChange(async (v) => {
 					const n = Math.max(0, Math.min(CLOUD_FREE_CHARS, Math.floor(Number(v.replace(/,/g, "")))));
-					if (Number.isFinite(n)) {
+					if (v.trim() !== "" && Number.isFinite(n)) {
 						p.settings.cloudMonthlyCap = n;
 						await p.saveSettings();
 					}

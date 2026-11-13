@@ -33,9 +33,12 @@ async function ensureFolder(app: App, folder: string) {
 	}
 }
 
+/** 備份與還原涵蓋的資料夾。 */
+export const BACKUP_ROOTS = [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR, USERS_DIR];
+
 export async function backupNow(app: App, deviceId: string): Promise<BackupResult> {
 	const files: Record<string, string> = {};
-	for (const dir of [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR, USERS_DIR]) {
+	for (const dir of BACKUP_ROOTS) {
 		for (const path of await listRecursive(app, dir)) {
 			if (!/\.(jsonl|md)$/.test(path)) continue;
 			files[path] = await app.vault.adapter.read(path);
@@ -108,6 +111,8 @@ export async function restoreBackup(app: App, file: TFile): Promise<RestoreResul
 	for (const [path, content] of Object.entries(data.files ?? {})) {
 		if (typeof content !== "string" || !/\.(jsonl|md)$/.test(path) || path.includes("..")) continue;
 		const p = normalizePath(path);
+		// 只還原備份會包含的那幾個資料夾（備份檔被改過也不會寫到別的地方）
+		if (!BACKUP_ROOTS.some((r) => p.startsWith(r + "/"))) continue;
 		if (!(await app.vault.adapter.exists(p))) {
 			await ensureFolder(app, p.split("/").slice(0, -1).join("/"));
 			await app.vault.create(p, content);

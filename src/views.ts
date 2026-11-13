@@ -12,6 +12,11 @@ import { LANG, LANGS, Lang } from "./lang";
 import { langSelect } from "./langview";
 import { AddUserModal, DeleteUserModal } from "./userview";
 
+/** 主畫面會顯示的檔案：文章、題庫、修正題（錄音、使用者清單、報告不影響這個畫面）。 */
+export function homeRelevant(path: string): boolean {
+	return path.startsWith("english/sources/") || path.startsWith("english/bank/") || path.startsWith("english/fixes/");
+}
+
 // =====================================================================
 // 主畫面：文章列表、匯入、出題
 export class HomeView extends ItemView {
@@ -28,13 +33,31 @@ export class HomeView extends ItemView {
 		return "book-open";
 	}
 
+	private renderTimer: number | null = null;
+
 	async onOpen() {
-		const relevant = (path: string) => path.startsWith("english/");
-		this.registerEvent(this.app.metadataCache.on("changed", (f) => relevant(f.path) && this.render()));
-		this.registerEvent(this.app.vault.on("create", (f) => relevant(f.path) && this.render()));
-		this.registerEvent(this.app.vault.on("delete", (f) => relevant(f.path) && this.render()));
-		this.registerEvent(this.app.vault.on("rename", (f, old) => (relevant(f.path) || relevant(old)) && this.render()));
+		// 只有文章、題庫、修正題的變動會影響這個畫面。錄音（english/audio）不算：
+		// 同步或預先產生錄音時一次進來幾百個檔，之前每個檔都整頁重畫、重讀所有紀錄，iPad 會卡
+		const relevant = (path: string) => homeRelevant(path);
+		this.registerEvent(this.app.metadataCache.on("changed", (f) => relevant(f.path) && this.renderSoon()));
+		this.registerEvent(this.app.vault.on("create", (f) => relevant(f.path) && this.renderSoon()));
+		this.registerEvent(this.app.vault.on("delete", (f) => relevant(f.path) && this.renderSoon()));
+		this.registerEvent(this.app.vault.on("rename", (f, old) => (relevant(f.path) || relevant(old)) && this.renderSoon()));
 		this.render();
+	}
+
+	async onClose() {
+		if (this.renderTimer !== null) window.clearTimeout(this.renderTimer);
+		this.renderTimer = null;
+	}
+
+	/** 連續很多個檔案事件合併成一次重畫。 */
+	renderSoon(delay = 300) {
+		if (this.renderTimer !== null) return;
+		this.renderTimer = window.setTimeout(() => {
+			this.renderTimer = null;
+			this.render();
+		}, delay);
 	}
 
 	render() {
@@ -383,11 +406,19 @@ export class VerifyView extends ItemView {
 		await this.render();
 	}
 
+	/** 正在畫的時候又被要求重畫（換了使用者或語言）：畫完再畫一次，不要停在舊的內容。 */
+	private again = false;
 	async render() {
-		if (this.busy) return;
+		if (this.busy) {
+			this.again = true;
+			return;
+		}
 		this.busy = true;
 		try {
-			await this.draw();
+			do {
+				this.again = false;
+				await this.draw();
+			} while (this.again);
 		} finally {
 			this.busy = false;
 		}
