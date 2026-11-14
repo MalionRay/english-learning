@@ -16,7 +16,7 @@ import {
 	VERIFY_VIEW,
 } from "./constants";
 import { Level } from "./generate";
-import { AppendOnlyWriter, DEBUG_ROOT, LOG_ROOT, LogEntry, Totals, computeTotals, logPath, safeName, trimDebugLog, uuid } from "./logs";
+import { AppendOnlyWriter, DEBUG_ROOT, DIAG_ROOT, LOG_ROOT, LogEntry, Totals, computeTotals, entryPath, safeName, slimLogs, trimDebugLog, uuid } from "./logs";
 import { cloudMonth, readCloudUsage } from "./cloudtts";
 import { syncWithProbe } from "./syncwait";
 import { CloudTtsModal, ELSettingTab } from "./settings";
@@ -41,6 +41,7 @@ import type { Bank, Question } from "./generate";
 import { DeleteResult, USERS_DIR, UserInfo, UserPrefs, checkNewName, deleteUserData, loadUserEvents, normalizeChatMemory, replayUsers, seedEvents, usersPath } from "./users";
 import { AddUserModal } from "./userview";
 import { LANG, LANGS, Lang, langOf } from "./lang";
+import { MemEvent, MemoryManager, memoryPath } from "./memory";
 
 /** 由 esbuild 從 manifest.json 注入（Hot Reload 後 this.manifest 可能是舊的） */
 declare const PLUGIN_VERSION: string;
@@ -53,6 +54,8 @@ export default class EnglishLearningPlugin extends Plugin {
 	settings!: Settings;
 	deviceId!: string;
 	writer!: AppendOnlyWriter;
+	/** 跨對話記憶：對話結束時整理重點、下次對話交給 AI（src/memory.ts）。 */
+	memory!: MemoryManager;
 	/** 這台裝置正在出題的文章路徑 */
 	generating = new Set<string>();
 	private prefetching = false;
@@ -67,6 +70,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		await this.loadSettings();
 		this.deviceId = this.loadOrCreateDeviceId();
 		this.writer = new AppendOnlyWriter(this.app);
+		this.memory = new MemoryManager(this);
 		await this.reloadUsers().catch((e) => console.error("english-learning: load users", e));
 		// 其他裝置新增／刪除使用者，同步下來後重讀
 		const onUsers = (f: { path: string }) => {
@@ -118,9 +122,9 @@ export default class EnglishLearningPlugin extends Plugin {
 			}, 60_000);
 			this.register(() => window.clearTimeout(t));
 		});
-		// 除錯紀錄只留最近的部分（啟動 90 秒後整理一次；只整理這台裝置自己的檔）
+		// 除錯紀錄只留最近的部分、學習紀錄裡的診斷紀錄搬出去（啟動 90 秒後整理一次；只整理這台裝置自己的檔）
 		this.app.workspace.onLayoutReady(() => {
-			const t = window.setTimeout(() => void this.trimDebug(), 90_000);
+			const t = window.setTimeout(() => void this.trimDebug().then(() => this.slimLogs()), 90_000);
 			this.register(() => window.clearTimeout(t));
 		});
 		this.addCommand({ id: "backup", name: "立即備份", callback: () => this.backup() });
@@ -253,6 +257,28 @@ export default class EnglishLearningPlugin extends Plugin {
 		return normalizeChatMemory(this.userList.find((x) => x.name === name)?.prefs.chatMemory);
 	}
 
+	/** 這位使用者要不要讓 AI 記得以前的對話（跨對話記憶）；沒設定是要。 */
+	remembers(name: string): boolean {
+		if (!this.userNames().includes(name)) return false;
+		return this.userList.find((x) => x.name === name)?.prefs.remember !== false;
+	}
+
+	/** 開關跨對話記憶。重新打開時先記下時間：關掉的那段時間聊的不會被補整理。 */
+	async setRemember(name: string, on: boolean) {
+		if (on && !this.remembers(name)) await this.memory.markSince(name); // 本來就開著的不用記
+		await this.setUserPref(name, "remember", on);
+	}
+
+	/** 寫進這台裝置自己的記憶檔（english/memory/<user>/<deviceId>.jsonl）。 */
+	appendMemory(e: MemEvent): Promise<void> {
+		return this.writer.append(memoryPath(e.user, this.deviceId), JSON.stringify(e) + "\n");
+	}
+
+	/** 等前面排隊的寫入都寫完（整理記憶前，對話檔的最後幾則要先寫進去）。 */
+	flushWrites(): Promise<void> {
+		return this.writer.flush();
+	}
+
 	/** 改一位使用者自己的設定：寫進 english/users（會同步，所有裝置一樣）。 */
 	async setUserPref<K extends keyof UserPrefs>(name: string, key: K, value: UserPrefs[K]) {
 		if (!this.userNames().includes(name)) throw new Error(`沒有「${name}」這位使用者`);
@@ -302,7 +328,7 @@ export default class EnglishLearningPlugin extends Plugin {
 		await this.writer.flush();
 		// 這個月他用掉的 Google Cloud 語音字數要留下來（記到另一位使用者），不然刪掉後每月上限會少算，可能超過免費額度
 		const month = cloudMonth();
-		const carried = await readCloudUsage(this.app, month, `${LOG_ROOT}/${safeName(name)}`).catch(() => 0);
+		const carried = await readCloudUsage(this.app, month, [`${LOG_ROOT}/${safeName(name)}`, `${DIAG_ROOT}/${safeName(name)}`]).catch(() => 0);
 		if (carried > 0) {
 			const keep = names.find((u) => u !== name)!;
 			await this.writeEntry({ ...this.entry("tts", { source: "cloud", chars: carried, month, carriedFrom: name }), user: keep });
@@ -356,8 +382,9 @@ export default class EnglishLearningPlugin extends Plugin {
 		return { id: uuid(), ts: new Date().toISOString(), device: this.deviceId, user: this.user, type, ...extra };
 	}
 
+	/** 學習紀錄寫 logs/…，診斷紀錄（同步、語音、AI 呼叫…）寫 debug/diag/…（logs.entryPath）。 */
 	private async writeEntry(e: LogEntry) {
-		await this.writer.append(logPath(e.user, this.deviceId), JSON.stringify(e) + "\n");
+		await this.writer.append(entryPath(e, this.deviceId), JSON.stringify(e) + "\n");
 	}
 
 	async tap(): Promise<void> {
@@ -778,6 +805,16 @@ export default class EnglishLearningPlugin extends Plugin {
 			return await this.writer.rewrite(normalizePath(`${DEBUG_ROOT}/${this.deviceId}.md`), (text) => trimDebugLog(text));
 		} catch {
 			return false; // 整理失敗沒關係，下次啟動再試
+		}
+	}
+
+	/** 學習紀錄瘦身：以前寫在學習紀錄裡的診斷紀錄搬到診斷檔，診斷檔只留最近的。 */
+	async slimLogs(): Promise<void> {
+		try {
+			const r = await slimLogs(this.app, this.writer, this.deviceId);
+			if (r.moved) this.debug(`log slimming: moved ${r.moved} diagnostic entries out of ${r.files} learning log file(s)`);
+		} catch (e) {
+			this.debug(`log slimming failed: ${errMsg(e)}`); // 沒整理到沒關係，下次啟動再試
 		}
 	}
 

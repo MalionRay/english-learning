@@ -9,7 +9,7 @@ import { WordsView } from "../src/wordviews";
 import { settingsStepDone } from "../src/constants";
 import { convBlock, convHeader, parseConvMessages } from "../src/chat";
 import { renderBank } from "../src/generate";
-import { makeApp } from "./helpers/app";
+import { makeApp, NO_MEMORY } from "./helpers/app";
 import { japaneseBank, sampleBank } from "./helpers/fixtures";
 const ob = require("obsidian");
 
@@ -25,7 +25,7 @@ function fakePlugin(files: Map<string, string | ArrayBuffer>, app: any, over: Re
 		deviceId: "ipad-1",
 		settings: { users: ["ray", "kid"], newPerDay: 10 },
 		userNames: () => ["ray", "kid"],
-		chatMemoryOf: () => 50,
+		chatMemoryOf: () => 50, ...NO_MEMORY,
 		levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {

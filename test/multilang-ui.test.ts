@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { PracticeView } from "../src/practice";
 import { ChatView } from "../src/chatview";
 import { renderBank } from "../src/generate";
-import { makeApp } from "./helpers/app";
+import { makeApp, NO_MEMORY } from "./helpers/app";
 import { japaneseBank, sampleBank, spanishBank } from "./helpers/fixtures";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -28,7 +28,7 @@ function setup(lang: "en" | "es" | "ja") {
 		deviceId: "ipad-1",
 		settings: { users: ["ray"], newPerDay: 10 },
 		userNames: () => ["ray"],
-		chatMemoryOf: () => 50, levelOf: () => "adult",
+		chatMemoryOf: () => 50, ...NO_MEMORY, levelOf: () => "adult",
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();

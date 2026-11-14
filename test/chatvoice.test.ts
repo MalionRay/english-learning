@@ -5,7 +5,7 @@ import { hedged, AIError } from "../src/ai";
 import { ChatView, LS_CHAT_VOICE } from "../src/chatview";
 import { VOICE_TURN, parseHeard } from "../src/chat";
 import { downsample, encodeWav, trimSilence } from "../src/recorder";
-import { makeApp } from "./helpers/app";
+import { makeApp, NO_MEMORY } from "./helpers/app";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -54,7 +54,7 @@ function setup(replies: object[]) {
 		app,
 		user: "ray", lang: "en",
 		deviceId: "ipad-1",
-		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
+		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, ...NO_MEMORY, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();

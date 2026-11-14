@@ -45,6 +45,7 @@ export function makeApp(files: FileMap = new Map()) {
 			trashFile: async (f: any) => files.delete(f.path),
 		},
 		vault: {
+			on: () => ({}),
 			getFiles: () => [...files.keys()].map(tfile),
 			getMarkdownFiles: () => [...files.keys()].filter((p) => p.endsWith(".md")).map(tfile),
 			getAbstractFileByPath: (p: string) => (files.has(p) ? tfile(p) : null),
@@ -86,3 +87,18 @@ export function makeApp(files: FileMap = new Map()) {
 	};
 	return { app, files, ls };
 }
+
+/** 假外掛用：沒開跨對話記憶（和記憶無關的對話測試用這個）。 */
+export const NO_MEMORY = {
+	remembers: () => false,
+	setRemember: async () => undefined,
+	memory: {
+		busy: false,
+		onChange: () => () => undefined,
+		list: async () => [],
+		catchUp: async () => 0,
+		remember: async () => "skipped",
+		settle: async () => true,
+		forget: async () => undefined,
+	},
+};

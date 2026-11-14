@@ -93,6 +93,9 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 		prefs: { ray: 100 } as Record<string, number>,
 		chatMemoryOf: (n: string) => plugin.prefs[n] ?? 50,
 		setUserPref: async (n: string, k: string, v: number) => void (plugin.prefs[n] = v),
+		remember: { amy: false } as Record<string, boolean>,
+		remembers: (n: string) => plugin.remember[n] !== false,
+		setRemember: async (n: string, v: boolean) => void (plugin.remember[n] = v),
 	};
 	const el = document.createElement("div");
 	drawUsersSection(el, plugin, () => undefined);
@@ -111,6 +114,17 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 	selects[1].dispatchEvent(new (window as any).Event("change"));
 	await new Promise((r) => setTimeout(r, 0));
 	assert.equal(plugin.prefs.amy, 0);
+	// 每位使用者自己的「記得以前的對話」（跨對話記憶）
+	const toggles = [...el.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+	assert.equal(toggles.length, 2);
+	assert.equal(toggles[0].checked, true, "ray 沒設＝開");
+	assert.equal(toggles[1].checked, false, "amy 關掉了");
+	toggles[0].checked = false;
+	toggles[0].dispatchEvent(new (window as any).Event("change"));
+	toggles[1].checked = true;
+	toggles[1].dispatchEvent(new (window as any).Event("change"));
+	await new Promise((r) => setTimeout(r, 0));
+	assert.deepEqual(plugin.remember, { ray: false, amy: true });
 
 	const m: any = new DeleteUserModal(plugin.app, plugin, "amy");
 	m.open();

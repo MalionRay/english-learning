@@ -6,7 +6,7 @@ import { mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt, usedTargets
 import { ChatView } from "../src/chatview";
 import { renderBank } from "../src/generate";
 import { computeStates } from "../src/srs";
-import { makeApp } from "./helpers/app";
+import { makeApp, NO_MEMORY } from "./helpers/app";
 import { sampleBank } from "./helpers/fixtures";
 
 const t = (d: number) => new Date(Date.now() - d * 864e5).toISOString();
@@ -91,7 +91,7 @@ test("對話畫面：到期的字放進提示，用對了記一筆複習", async
 		app,
 		user: "ray", lang: "en",
 		deviceId: "ipad-1",
-		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
+		settings: { users: ["ray"] }, userNames: () => ["ray", "kid"], chatMemoryOf: () => 50, ...NO_MEMORY, levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {
 			return this.backend();

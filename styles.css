@@ -155,3 +155,14 @@
 .workspace-leaf-content[data-type^="english-learning-"] > .view-content {
 	padding-bottom: calc(var(--el-navbar-gap, 0px) + 4px);
 }
+
+/* 跨對話記憶：對話開始畫面的「記得的事」 */
+.el-memory { margin: 2px 0 8px; }
+.el-memory:empty { display: none; }
+.el-mem { border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 6px 10px; margin: 4px 0; }
+.el-mem > summary { cursor: pointer; font-weight: 600; padding: 2px 0; }
+.el-mem[open] > summary { margin-bottom: 4px; }
+.el-mem-item { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--background-modifier-border); }
+.el-mem-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.el-mem-day { flex: none; font-variant-numeric: tabular-nums; }
+.el-practice .el-mem-item button.el-zh-btn { min-width: 36px; min-height: 32px; font-size: 0.9em; }

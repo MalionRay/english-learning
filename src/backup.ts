@@ -8,6 +8,7 @@ import { FIX_DIR } from "./fixes";
 import { CONV_DIR } from "./chat";
 import { REPORT_DIR } from "./patterns";
 import { USERS_DIR } from "./users";
+import { MEMORY_DIR } from "./memory";
 
 export const BACKUP_DIR = "backup";
 export const LS_LAST_BACKUP = "english-learning:last-backup";
@@ -34,7 +35,7 @@ async function ensureFolder(app: App, folder: string) {
 }
 
 /** 備份與還原涵蓋的資料夾。 */
-export const BACKUP_ROOTS = [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR, USERS_DIR];
+export const BACKUP_ROOTS = [LOG_ROOT, SOURCES_DIR, BANK_DIR, FIX_DIR, CONV_DIR, REPORT_DIR, USERS_DIR, MEMORY_DIR];
 
 export async function backupNow(app: App, deviceId: string): Promise<BackupResult> {
 	const files: Record<string, string> = {};

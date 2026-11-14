@@ -9,7 +9,8 @@
 - 裝置 ID 存 localStorage（app.saveLocalStorage），不得寫入 data.json
 
 ## 資料設計
-- 答題紀錄：logs/<user>/<deviceId>.jsonl，append-only，每筆含 UUID
+- 答題紀錄：logs/<user>/<deviceId>.jsonl，append-only，每筆含 UUID；只放學習紀錄（answer、grade、flag／unflag、word-add／remove、phrase-add／remove）
+- 診斷紀錄（sync、tts、api、tap、mic）不放 logs：寫 debug/diag/<user>/<deviceId>.jsonl，只留最近的（v0.23.0，見「學習紀錄瘦身」）；寫到哪個檔由 logs.entryPath 依 type 決定，新增 log type 時要想清楚是哪一種（DIAG_TYPES）
 - SRS 狀態不落檔，啟動時從所有 log 重算
 - 只在匯入來源的裝置出題，以 frontmatter status 防重複
 - AI 呼叫抽成可替換介面（src/ai.ts 的 AIBackend）
@@ -49,8 +50,8 @@
 - 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
 - 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
 - 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」；主畫面（書本圖示）也有使用者選單、「＋ 新增使用者」（v0.20.2）和「刪除使用者…」（刪選單上選的那位，v0.20.3）
-- 每位使用者自己的設定（v0.22.0）：同一個 jsonl 裡的 type "user-set"（key、value），重播時最後一筆為準、只套用在已存在的使用者（刪掉再建立是新的人，設定清空）；UserInfo.prefs；plugin.setUserPref 寫入並觸發同步；目前只有 chatMemory（對話記憶長度）
-- 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、english/reports/<name>/、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
+- 每位使用者自己的設定（v0.22.0）：同一個 jsonl 裡的 type "user-set"（key、value），重播時最後一筆為準、只套用在已存在的使用者（刪掉再建立是新的人，設定清空）；UserInfo.prefs；plugin.setUserPref 寫入並觸發同步；目前有 chatMemory（對話記憶長度）、remember（跨對話記憶的開關，沒設定＝開；plugin.remembers／setRemember）
+- 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、debug/diag/<name>/（診斷紀錄）、english/reports/<name>/、english/memory/<name>/（對話記憶）、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
 
 ## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
 - Lang = "en" | "es" | "ja"；西班牙文是拉丁美洲（墨西哥）用法，語音 es-US；日文給「從零開始」的學習者，語音 ja-JP（使用者 2026-10-31 決定）
@@ -100,7 +101,7 @@
 - 播放走發音流程，慢速 0.7 倍；從「下一題」進來時自動播放（仍在點擊事件內）；diffWords 逐字比對保留備用
 
 ## 英文對話與句子本（src/chat.ts、src/chatview.ts）
-- 對話記憶長度（v0.22.0，使用者 2026-11-09 要求、每個帳號各自設定）：historyTurns 只送最近 N 則訊息給 AI（N＝plugin.chatMemoryOf(user)：24／50／100／0＝整段對話，預設 50，不在選項裡的值用 50；原本固定 24）；設定頁「使用者」區下面「對話記憶長度」每位一個選單；不同次對話之間 AI 不記得內容（前 3 次對話只拿來估程度）
+- 對話記憶長度（v0.22.0，使用者 2026-11-09 要求、每個帳號各自設定）：historyTurns 只送最近 N 則訊息給 AI（N＝plugin.chatMemoryOf(user)：24／50／100／0＝整段對話，預設 50，不在選項裡的值用 50；原本固定 24）；設定頁「使用者」區下面「對話記憶長度」每位一個選單；這是「同一次對話」裡 AI 看得到多少；不同次對話之間靠「跨對話記憶」接上（v0.23.0，見下面一節），前 3 次對話另外拿來估程度
 - AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
 - 對話角色：成人 Alex（32 歲、Portland、設計師、去過台灣）、小孩 Mia（12 歲、Seattle）；提示要求針對細節回應、分享自己的經驗、不要制式稱讚開頭、口語、每次最多一個問題；temperature 0.9（使用者回饋 3.1-flash-lite 的回答很機械）
 - 對話自適應程度（src/chatlevel.ts，v0.18.0）：每次呼叫依最近 10 則學習者訊息（含這位使用者前 3 次對話）估 1～5 級（小孩最多 4；沒紀錄時成人 3、小孩 2；樣本少時往起點靠、越新越重）。訊息分數：全中文 0.15、被糾正依字的編輯距離（小錯 0.75、重寫 0.1）、夾中文最多 0.5、沒錯 1（1～2 字 0.6）；平均少於 4 字最多 3 級；還沒有 AI 回覆的訊息不算。levelPrompt 加在系統提示：低級短句常用字，高級像朋友聊天；明確要求「自然不等於困難」，不刻意用難字難句。頂端顯示「程度：…」，改變時寫 debug
@@ -113,6 +114,28 @@
 - AI 速度測試（src/speedtest.ts；對話開始畫面與指令）：在裝置上量列出模型（純網路）、最短生成、對話大小 JSON（兩次）、thinkingLevel minimal 兩種寫法、其他 flash 模型、自然語音（網路與解碼分開）與主執行緒卡頓，結果寫進 debug 並同步
 - 回應速度：chat 用 hedged 請求（8 秒沒回就再送一次，取先回來的；語音 12 秒），45 秒逾時；api log 記 ms，超過 8 秒寫 debug；使用者訊息寫檔不等待（寫入佇列保持順序）
 - 練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
+
+## 跨對話記憶（src/memory.ts，v0.23.0）
+- 使用者 2026-11-14 決定要做，而且「各記各的」：每位使用者、每種語言各一份（英文的 Alex、西班牙文的 Sofía、日文的結衣互相不知道）；ray 和 kid 也不混
+- 做法：對話結束時請 AI（plugin.fastBackend()，temperature 0.2）把這次聊到的重點整理成幾條記憶（繁體中文、一句話、最多 60 字），下次開新對話或續聊時加進系統提示（memoryPrompt，放在 chatSystemPrompt 後面、levelPrompt 前面；對話開始時讀一次，聊到一半不換），要求自然提起、不要列出來、日期過了的計畫改問「結果怎麼樣」、和學習者現在說的不一樣時以現在為準、照樣說外語
+- 存放：english/memory/<user>/<deviceId>.jsonl（append-only、每台裝置只寫自己的檔），type "mem"：lang（沒有＝英文）、add [{key, text, at}]、remove [key]、conv＋count（AI 整理了哪個對話檔、到第幾則訊息）、since、by "ai"／"user"
+- 重播 replayMemory：結果＝所有加過的減掉所有刪過的（key 不重複使用，改寫＝刪舊的加新的），和紀錄的先後、各裝置時鐘無關——刪掉的不會因為同步順序又跑回來；一模一樣的句子只留新的；done＝每個對話整理到第幾則（取最大）；最新的排前面
+- AI 回的是「修改」不是整份清單：{"add": [...], "update": [{id, text}], "remove": [id]}，沒提到的不動（小模型漏列時不會把記憶清掉）；現有記憶在請求裡編號 m1、m2…；parseMemoryOps 格式不對回 null（當作沒整理成功）；applyOps 一次最多加 4 條、超過 MEMORY_MAX（20）從最舊的開始丟
+- 整理的時機：按「結束對話」（ChatView.end → memory.remember，背景做；等它做完再觸發同步，最多等 15 秒）；沒按就離開的在「對話開始畫面出現時」補整理（catchUp：這位使用者＋這個語言、最近 14 天、一次最多 2 個、10 分鐘內不重複看；別台裝置開始的對話要最後一句超過 30 分鐘才幫忙整理）；學習者在還沒整理的部分至少說了 2 句才整理；續聊後只把新的部分交給 AI
+- MemoryManager 一次只整理一個對話（後面的要看到前面的結果）；開新對話時前一個還在整理就先等（最多 8 秒）；額度、網路、伺服器的錯不算失敗，AI 回的內容不能用才算（localStorage english-learning:memory-fail），同一個對話失敗 2 次補整理就不再試
+- 角色扮演（餐廳、面試）裡說的不當成事實；不記密碼、證號、帳號、電話、地址；只記學習者自己說的，不記 AI 角色自己的故事
+- 畫面：對話開始畫面有開關「讓 Alex 記得以前聊過的事」和 details「🧠 Alex 記得的事（N）」（每條可以 ✕ 刪掉、「全部忘記」要按兩次、整理中會顯示）；設定 →「使用者」下面「記得以前的對話」每位一個開關
+- 關掉（user-set remember=false）：不整理、對話也不帶記憶，已經記的留著（看得到、可以刪）；重新打開時寫一筆 since，關掉期間開始的對話不補整理
+- 對話開始畫面選的情境、文章、複習開關一改就存（這個畫面會因為同步、整理記憶重畫，之前要按「開始對話」才存，重畫會跳回去）
+- 也在備份範圍；刪除使用者時一起刪
+
+## 學習紀錄瘦身（src/logs.ts，v0.23.0）
+- 原因：學習紀錄每次練習都要整個讀一遍，而 iPad 實際的檔案裡約 8 成是診斷紀錄（每次同步、每次發音、每次 AI 呼叫各一筆）
+- 診斷紀錄寫 debug/diag/<user>/<deviceId>.jsonl（和 logs 同樣的排法，刪除使用者、轉記 Google Cloud 語音用量照舊）；不在備份範圍
+- 自動清理 trimDiag：一般診斷紀錄留 14 天、最多 2000 筆；Google Cloud 語音的用量（tts、source "cloud"）留 62 天，因為每月上限要加總整個月——超過 14 天的只留算用量的欄位，id 不變
+- 讀的地方兩邊都讀、UUID 去重：readCloudUsage（每月用量）、computeTotals（驗證面板的「記一筆」和最新狀態）；還沒更新的裝置繼續寫在 logs 也算得到
+- 舊資料 slimLogs（啟動 90 秒後，和 trimDebug 一起）：這台裝置自己的 logs/*/<deviceId>.jsonl 裡的診斷紀錄先寫進診斷檔（已經有的不重複）、再從學習紀錄拿掉；只動自己寫的檔，別台裝置的等它們自己更新；AppendOnlyWriter.rewrite(path, fn, create) 和 append 排同一個佇列，整理時新寫入的不會掉
+- 驗證面板的「記一筆」現在是診斷紀錄，14 天後合計會歸零（面板上有寫）
 
 ## 錯誤模式分析（src/patterns.ts、src/patternview.ts）
 - 收集最近 60 天的錯誤：翻譯／句子題分數 < 90 且有修正、克漏字打錯（不含「我不知道」）、這位使用者對話裡的 correction；同一句只留一次，最新的最多 80 筆；少於 5 筆不呼叫 AI
@@ -131,7 +154,7 @@
 - 設定顯示錄音總用量與這台裝置的用量
 
 ## 備份（src/backup.ts）
-- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations、english/reports 打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
+- 每 7 天（或「立即備份」）把 logs、english/sources、english/bank、english/fixes、conversations、english/reports、english/users、english/memory（BACKUP_ROOTS；不含診斷紀錄 debug/diag）打包成 backup/<deviceId>/YYYY-MM-DD.json（{files: {path: content}}），保留最近 4 份
 - 還原（設定 →「從備份還原」，restoreBackup）：只補不蓋——缺少的檔案重建；.jsonl 依每行的 id 補回缺少的行；已存在的 .md 保留不動
 
 ## v0.22.1 檢查後修正（2026-11-13，整份程式逐檔檢查；之後改這些地方要守住）
@@ -168,5 +191,5 @@
   `<vault>/.obsidian/plugins/english-learning/`（該資料夾有 .hotreload，Hot Reload 會自動重新載入）
 - 發布（給 iPad/iPhone 的 BRAT）：同時改 manifest.json 與 versions.json 的版本號，推到 main；
   GitHub Action 會編譯、跑 check 與測試，並在該版本沒有 release 時自動發布 main.js、manifest.json、styles.css
-- 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools）；設定頁每畫一段就把段落名稱寫進 localStorage（english-learning:settings-step，同步寫入、當掉也留得住），下次啟動時沒畫完就記進 debug 並同步；CloudTtsModal 也記（cloud-modal:<步驟>），本月用量改成按鈕才讀；v0.17.2 在 iPad 打開這個視窗仍會當掉，v0.17.3（不自動讀用量、金鑰欄不用 type=password）就不當了；貼上的金鑰只留 [A-Za-z0-9_-] 並檢查 AIza＋39 字元；試聽錯誤用 cloudHint 給中文提示並寫 debug
+- 除錯訊息寫進 Vault 的 debug/<deviceId>.md（iOS 沒有 DevTools；同一個資料夾底下的 debug/diag/ 是診斷紀錄）；設定頁每畫一段就把段落名稱寫進 localStorage（english-learning:settings-step，同步寫入、當掉也留得住），下次啟動時沒畫完就記進 debug 並同步；CloudTtsModal 也記（cloud-modal:<步驟>），本月用量改成按鈕才讀；v0.17.2 在 iPad 打開這個視窗仍會當掉，v0.17.3（不自動讀用量、金鑰欄不用 type=password）就不當了；貼上的金鑰只留 [A-Za-z0-9_-] 並檢查 AIza＋39 字元；試聽錯誤用 cloudHint 給中文提示並寫 debug
 - 觸發 Remotely Save 用 app.commands.executeCommandById('remotely-save:start-sync')，是非正式內部 API，失效時退回手動同步

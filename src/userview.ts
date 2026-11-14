@@ -3,6 +3,7 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
 import { CHAT_MEMORY_DEFAULT, CHAT_MEMORY_OPTIONS, LEVEL_NAME, chatMemoryLabel, checkNewName } from "./users";
+import { MEMORY_MAX } from "./memory";
 
 export class AddUserModal extends Modal {
 	private name = "";
@@ -15,7 +16,7 @@ export class AddUserModal extends Modal {
 	onOpen() {
 		this.setTitle("新增使用者");
 		const el = this.contentEl;
-		el.createEl("p", { cls: "el-muted", text: "每位使用者的答題紀錄、生字本、句子本、對話和統計都分開。同步後其他裝置也會出現這位使用者。" });
+		el.createEl("p", { cls: "el-muted", text: "每位使用者的答題紀錄、生字本、句子本、對話、對話記憶和統計都分開。同步後其他裝置也會出現這位使用者。" });
 		const err = el.createDiv({ cls: "el-warn" });
 		new Setting(el)
 			.setName("名字")
@@ -72,7 +73,7 @@ export class DeleteUserModal extends Modal {
 		const el = this.contentEl;
 		el.createEl("p", { text: "會刪除這位使用者的所有資料，所有裝置同步後都會刪掉：" });
 		const ul = el.createEl("ul");
-		for (const t of ["答題紀錄與複習進度", "生字本、句子本、學習統計", "英文對話紀錄", "錯誤分析報告", "備份裡他的資料"]) ul.createEl("li", { text: t });
+		for (const t of ["答題紀錄與複習進度", "生字本、句子本、學習統計", "對話紀錄，和 AI 記得的事（對話記憶）", "錯誤分析報告", "備份裡他的資料"]) ul.createEl("li", { text: t });
 		el.createEl("p", { cls: "el-muted", text: "文章、題庫和錄音是大家共用的，不會刪。刪掉的檔案會照 Obsidian「刪除的檔案」設定放進垃圾桶。" });
 		el.createEl("p", { text: `確定的話，請輸入名字「${this.name}」：` });
 		const input = el.createEl("input", { cls: "el-cloze-input", attr: { type: "text", autocapitalize: "off", autocorrect: "off", placeholder: this.name } });
@@ -135,5 +136,26 @@ export function drawUsersSection(container: HTMLElement, plugin: EnglishLearning
 				}
 			});
 		});
+	}
+
+	// 跨對話記憶（src/memory.ts）：每位使用者各自開關，存在 english/users，所有裝置一樣
+	new Setting(container)
+		.setName("記得以前的對話")
+		.setDesc(
+			`每次對話結束時，AI 把這次聊到的重點整理成幾條記憶（每種語言各記各的，最多 ${MEMORY_MAX} 條），下次開新對話時像記得你的朋友一樣自然提起。` +
+				"記了什麼可以在對話的開始畫面看，也可以一條一條刪。關掉後不再記新的、聊天時也不會用到。每位使用者各自設定，所有裝置一樣。",
+		)
+		.setHeading();
+	for (const u of users) {
+		new Setting(container).setName(u.name).addToggle((t) =>
+			t.setValue(plugin.remembers(u.name)).onChange(async (v) => {
+				try {
+					await plugin.setRemember(u.name, v);
+					new Notice(`${u.name}：${v ? "會記得以前的對話" : "不記得以前的對話"}`);
+				} catch (e) {
+					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
+				}
+			}),
+		);
 	}
 }

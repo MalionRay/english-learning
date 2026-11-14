@@ -253,6 +253,40 @@ export function convHeader(m: ConvMeta): string {
 	].join("\n");
 }
 
+/**
+ * 讀對話檔開頭的 frontmatter（convHeader 寫的格式）。不靠 Obsidian 的索引：
+ * 剛同步下來的檔可能還沒進索引，整理記憶時要直接從檔案內容讀。
+ */
+export function parseConvMeta(md: string): ConvMeta | null {
+	const fm = md.replace(/\r\n/g, "\n").match(/^---\n([\s\S]*?)\n---/);
+	if (!fm) return null;
+	const o: Record<string, string> = {};
+	for (const line of fm[1].split("\n")) {
+		const m = line.match(/^([A-Za-z]+):\s*(.*)$/);
+		if (!m) continue;
+		let v = m[2].trim();
+		if (/^".*"$/.test(v)) {
+			try {
+				v = String(JSON.parse(v));
+			} catch {
+				v = v.slice(1, -1);
+			}
+		} else if (/^'.*'$/.test(v)) v = v.slice(1, -1);
+		o[m[1]] = v;
+	}
+	if (!o.user) return null;
+	return {
+		user: o.user,
+		level: o.level === "kid" ? "kid" : "adult",
+		lang: langOf(o.lang),
+		topic: o.topic || "free",
+		topicLabel: o.topicLabel || o.topic || "",
+		...(o.article ? { article: o.article } : {}),
+		device: o.device || "",
+		started: o.started || "",
+	};
+}
+
 const MSG_RE = /<!--el-msg (.*?) -->/g;
 
 function encodeMsg(m: ConvMessage): string {

@@ -3,7 +3,7 @@
 // 必須用「另一個」有開付費帳戶的 Google Cloud 專案的 API key：同一個專案開了付費，Gemini API 也會變成付費版。
 import { App, requestUrl } from "obsidian";
 import { AIError, quotaDay } from "./ai";
-import { LOG_ROOT, listRecursive } from "./logs";
+import { DIAG_ROOT, LOG_ROOT, listRecursive } from "./logs";
 
 export const CLOUD_ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
 export const CLOUD_FREE_CHARS = 1_000_000;
@@ -79,11 +79,17 @@ export async function synthCloud(apiKey: string, text: string, voice: string, lo
 	return out.buffer;
 }
 
-/** 這個月所有裝置用了多少字：從 logs/**.jsonl 的 tts 紀錄（source "cloud"）加總，UUID 去重。 */
-export async function readCloudUsage(app: App, month = cloudMonth(), root = LOG_ROOT): Promise<number> {
+/**
+ * 這個月所有裝置用了多少字：從 tts 紀錄（source "cloud"）加總，UUID 去重。
+ * 新版寫在診斷檔 debug/diag/**.jsonl，舊版（和還沒更新的裝置）寫在 logs/**.jsonl，兩邊都讀；
+ * 搬到一半兩邊都有的同一筆只算一次。
+ */
+export async function readCloudUsage(app: App, month = cloudMonth(), roots: string | string[] = [LOG_ROOT, DIAG_ROOT]): Promise<number> {
 	const seen = new Set<string>();
 	let total = 0;
-	for (const path of await listRecursive(app, root)) {
+	const paths: string[] = [];
+	for (const root of typeof roots === "string" ? [roots] : roots) paths.push(...(await listRecursive(app, root)));
+	for (const path of paths) {
 		if (!path.endsWith(".jsonl")) continue;
 		let text = "";
 		try {

@@ -34,6 +34,7 @@ import { ChatTarget, mentionsWord, parseLearnerUsed, pickTargets, targetsPrompt,
 import { loadPractice } from "./practice";
 import { ChatLevel, LEVEL_LABEL, estimateChatLevel, levelPrompt } from "./chatlevel";
 import type { AnswerLog } from "./srs";
+import { MEMORY_DIR, MEMORY_MAX, MemItem, memDay, memoryPrompt } from "./memory";
 
 export const CHAT_VIEW = "english-learning-chat";
 const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article, review } }
@@ -43,6 +44,10 @@ const LS_CHAT_VOICE_LAST = "english-learning:chat-voice-last";
 export type ChatVoice = "system" | "natural" | "off";
 const HEDGE_MS = 8000; // 超過 8 秒沒回應就再送一次
 const TIMEOUT_MS = 45000;
+/** 開新對話時，上一個對話的記憶還在整理：最多等這麼久（等得到的話這次就用得上）。 */
+export const MEMORY_WAIT_MS = 8000;
+/** 結束對話後等記憶整理完再同步，最多等這麼久（超過就先同步，記憶下次同步再上傳）。 */
+export const MEMORY_SYNC_WAIT_MS = 15000;
 
 /** 輸入法正在選字（注音、日文）：這時候的 Enter 是「確定選字」，不是送出。Safari 選字的 Enter 沒有 isComposing，但 keyCode 是 229。 */
 export function composing(e: KeyboardEvent): boolean {
@@ -73,6 +78,10 @@ export class ChatView extends ItemView {
 	private lastLevel: ChatLevel | null = null;
 	private starting = false; // 正在開新對話（防止連點）
 	private reqSeq = 0; // 送給 AI 的請求編號（結束對話時加一，還沒回來的回覆就作廢）
+	private memItems: MemItem[] = []; // 這次對話帶著的記憶（開始或續聊時讀一次，聊到一半不換）
+	private memEl: HTMLElement | null = null; // 開始畫面的「記得的事」
+	private memOpen = false; // 清單有沒有展開（重畫時留著）
+	private memTimer: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: EnglishLearningPlugin) {
 		super(leaf);
@@ -87,6 +96,16 @@ export class ChatView extends ItemView {
 		return "messages-square";
 	}
 	async onOpen() {
+		// 記憶整理完、或別台裝置的記憶同步過來：開始畫面的「記得的事」重畫
+		this.register(this.plugin.memory.onChange(() => void this.drawMemory()));
+		const changed = (f: { path: string }) => {
+			if (!f.path.startsWith(MEMORY_DIR + "/") || this.phase !== "start") return;
+			if (this.memTimer) window.clearTimeout(this.memTimer);
+			this.memTimer = window.setTimeout(() => void this.drawMemory(), 500);
+		};
+		this.registerEvent(this.app.vault.on("create", changed));
+		this.registerEvent(this.app.vault.on("modify", changed));
+		this.register(() => this.memTimer && window.clearTimeout(this.memTimer));
 		this.render();
 	}
 
@@ -114,6 +133,7 @@ export class ChatView extends ItemView {
 	private root(): HTMLElement {
 		const el = this.contentEl;
 		el.empty();
+		this.memEl = null; // 「記得的事」跟著畫面一起清掉（開始畫面會再建立）
 		el.addClass("el-verify");
 		el.addClass("el-practice");
 		el.addClass("el-chat");
@@ -145,6 +165,14 @@ export class ChatView extends ItemView {
 		});
 		let topicId = prefs.topic ?? (p.levelOf(p.user) === "kid" ? "school" : "free");
 		let articlePath = prefs.article ?? "";
+		let review = prefs.review !== false;
+		// 選的情境、文章、要不要複習：一改就存（這個畫面會因為同步、換設定而重畫，選好的不能跳回去）
+		const user = p.user;
+		const save = () => {
+			const all = (this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, unknown>;
+			all[user] = { topic: topicId, article: articlePath, review };
+			this.app.saveLocalStorage(LS_CHAT, all);
+		};
 		const artRow = el.createDiv({ cls: "el-row" });
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "情境" });
@@ -161,11 +189,15 @@ export class ChatView extends ItemView {
 				if (!sources.length) a.createEl("option", { text: "（還沒有文章）", value: "" });
 				if (!articlePath && sources[0]) articlePath = sources[0].file.path;
 				a.value = articlePath;
-				a.onchange = () => (articlePath = a.value);
+				a.onchange = () => {
+					articlePath = a.value;
+					save();
+				};
 			};
 			sel.onchange = () => {
 				topicId = sel.value;
 				drawArt();
+				save();
 			};
 			drawArt();
 		});
@@ -185,21 +217,25 @@ export class ChatView extends ItemView {
 			voicePicker(this.app, r, undefined, p.lang);
 			r.createSpan({ cls: "el-muted", text: "自然語音用完或選「系統語音」時用這個聲音" });
 		});
-		let review = prefs.review !== false;
 		el.createEl("label", { cls: "el-row" }, (r) => {
 			const box = r.createEl("input", { type: "checkbox" });
 			box.checked = review;
-			box.onchange = () => (review = box.checked);
+			box.onchange = () => {
+				review = box.checked;
+				save();
+			};
 			r.createSpan({ text: "聊天中自然複習到期的生字和句子（用對了就算複習一次）" });
 		});
+		// 跨對話記憶：開關、記得的事（可以一條一條刪）；沒按「結束對話」就離開的在這裡補整理
+		this.memEl = el.createDiv({ cls: "el-memory" });
+		void this.drawMemory();
+		if (p.remembers(p.user)) void p.memory.catchUp(p.user, p.lang);
 
 		el.createDiv({ cls: "el-row el-big-buttons" }, (r) => {
 			const go = r.createEl("button", { text: "開始對話", cls: "mod-cta" });
 			go.onclick = () => {
 				this.primeAudio(); // 在點擊裡解鎖朗讀（iOS）
-				const all = (this.app.loadLocalStorage(LS_CHAT) ?? {}) as Record<string, unknown>;
-				all[p.user] = { topic: topicId, article: articlePath, review };
-				this.app.saveLocalStorage(LS_CHAT, all);
+				save();
 				this.startNew(TOPICS.find((t) => t.id === topicId) ?? TOPICS[0], topicId === "article" ? articlePath : undefined, review);
 			};
 		});
@@ -235,6 +271,125 @@ export class ChatView extends ItemView {
 				}
 			}
 			el.createDiv({ cls: "el-muted", text: "只能在開始對話的裝置上繼續聊；在別台裝置請開新對話。" });
+		}
+	}
+
+	// ---- 跨對話記憶 ----
+	/** 開始畫面的「記得的事」：開關、清單（可以一條一條刪）、全部忘記。 */
+	private async drawMemory() {
+		const box = this.memEl;
+		const p = this.plugin;
+		if (!box || this.phase !== "start") return;
+		const user = p.user;
+		const lang = p.lang;
+		let items: MemItem[] = [];
+		try {
+			items = await p.memory.list(user, lang);
+		} catch (e) {
+			p.debug(`chat memory list failed: ${(e as Error)?.message ?? e}`);
+		}
+		// 讀的時候畫面已經換了（開始對話、換了使用者或語言）：不畫
+		if (this.memEl !== box || this.phase !== "start" || p.user !== user || p.lang !== lang) return;
+		box.empty();
+		const who = personaName(lang, p.levelOf(user));
+		const on = p.remembers(user);
+		box.createEl("label", { cls: "el-row" }, (r) => {
+			const c = r.createEl("input", { type: "checkbox" });
+			c.checked = on;
+			c.onchange = async () => {
+				c.disabled = true;
+				try {
+					await p.setRemember(user, c.checked);
+					new Notice(c.checked ? `${who} 會記得之後聊過的事` : `${who} 不會再記新的事，聊天時也不會用到以前記的`, 6000);
+				} catch (e) {
+					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
+				}
+				void this.drawMemory();
+			};
+			r.createSpan({ text: `讓 ${who} 記得以前聊過的事（聊完把重點整理成幾條，下次自然提起）` });
+		});
+		if (!on && !items.length) return;
+		const det = box.createEl("details", { cls: "el-mem" });
+		det.open = this.memOpen;
+		det.addEventListener("toggle", () => (this.memOpen = det.open));
+		det.createEl("summary", { text: `🧠 ${who} 記得的事（${items.length}）${on && p.memory.busy ? "・整理中…" : ""}` });
+		if (!items.length)
+			det.createDiv({ cls: "el-muted", text: `還沒有。聊完按「結束對話」，${who} 會把這次聊到的重點記下來；沒按就離開的，下次打開這個畫面時會補整理。` });
+		for (const m of items) {
+			det.createDiv({ cls: "el-mem-item" }, (row) => {
+				row.createSpan({ cls: "el-mem-text", text: m.text });
+				row.createSpan({ cls: "el-muted el-mem-day", text: memDay(m.at).slice(5).replace("-", "/") });
+				const x = row.createEl("button", { cls: "el-zh-btn", text: "✕", attr: { "aria-label": "忘記這一條" } });
+				x.onclick = () => {
+					x.disabled = true;
+					void this.forget(user, lang, [m.key]);
+				};
+			});
+		}
+		if (items.length > 1) {
+			det.createDiv({ cls: "el-row" }, (r) => {
+				const all = r.createEl("button", { text: "全部忘記" });
+				let armed = 0;
+				all.onclick = () => {
+					if (!armed) {
+						// 第一下只是確認，4 秒內再按一次才真的刪
+						all.setText(`確定忘記這 ${items.length} 條？再按一次`);
+						all.addClass("mod-warning");
+						armed = window.setTimeout(() => {
+							armed = 0;
+							all.setText("全部忘記");
+							all.removeClass("mod-warning");
+						}, 4000);
+						return;
+					}
+					window.clearTimeout(armed);
+					all.disabled = true;
+					void this.forget(
+						user,
+						lang,
+						items.map((m) => m.key),
+					);
+				};
+			});
+		}
+		det.createDiv({
+			cls: "el-muted",
+			text: on
+				? `這是${LANG[lang].name}對話的記憶（每種語言各記各的），最多 ${MEMORY_MAX} 條；過時或重複的，之後整理時會自己更新。`
+				: "已關閉：不會再記新的，聊天時也不會用到。上面是以前記下來的，不想留可以刪掉。",
+		});
+	}
+
+	private async forget(user: string, lang: Lang, keys: string[]) {
+		try {
+			await this.plugin.memory.forget(user, lang, keys);
+		} catch (e) {
+			new Notice(`沒刪到：${(e as Error)?.message ?? e}`);
+		}
+		void this.drawMemory();
+	}
+
+	/**
+	 * 這次對話要帶著的記憶（這位使用者、這個語言的）。
+	 * wait：上一個對話還在整理時先等一下（最多 MEMORY_WAIT_MS），整理好的重點這次就用得上。
+	 */
+	private async loadMemories(wait: boolean) {
+		const p = this.plugin;
+		this.memItems = [];
+		const file = this.file;
+		const user = this.cuser();
+		const lang = this.clang();
+		if (!p.remembers(user)) return;
+		try {
+			if (wait && p.memory.busy) {
+				const note = this.listEl?.createDiv({ cls: "el-chat-typing", text: "整理上次聊天的重點…" });
+				await p.memory.settle(MEMORY_WAIT_MS);
+				note?.remove();
+			}
+			const items = await p.memory.list(user, lang);
+			if (this.file === file) this.memItems = items; // 等的時候對話已經結束或換了一個：不要蓋到別的對話
+		} catch (e) {
+			p.debug(`chat memory load failed: ${(e as Error)?.message ?? e}`);
 		}
 	}
 
@@ -334,6 +489,10 @@ export class ChatView extends ItemView {
 		} finally {
 			this.starting = false;
 		}
+		const file = this.file;
+		this.sending = true; // 等記憶、等開場的時候先不讓送出（開場回來後 ask 會放開）
+		await this.loadMemories(true);
+		if (this.file !== file) return; // 等記憶的時候這個對話已經結束（或又開了別的）
 		await this.send(null); // AI 開場
 	}
 
@@ -347,7 +506,7 @@ export class ChatView extends ItemView {
 			this.article = await this.loadArticle(fm.article);
 			this.file = f;
 			this.messages = parseConvMessages(await this.app.vault.read(f));
-			await Promise.all([this.loadTargets(review, f.path), this.loadPastMessages(f.path)]);
+			await Promise.all([this.loadTargets(review, f.path), this.loadPastMessages(f.path), this.loadMemories(false)]);
 			this.lastLevel = null;
 			this.phase = "chat";
 			this.drawChat();
@@ -543,6 +702,7 @@ export class ChatView extends ItemView {
 			const res = await p.fastBackend().chat(turns, {
 				system:
 					chatSystemPrompt(this.meta.level, this.topic, this.article || undefined, this.clang()) +
+					memoryPrompt(this.memItems, this.clang()) +
 					levelPrompt(this.levelEstimate(), this.meta.level, this.clang()) +
 					targetsPrompt(this.activeTargets(), this.meta.level, this.clang()),
 				json: true,
@@ -779,13 +939,26 @@ export class ChatView extends ItemView {
 		const nHow = fixes.reduce((n, r) => n + r.howto.length, 0);
 		const nRev = this.targets.filter((t) => this.doneTargets.has(t.qid)).length;
 		new Notice(`對話結束：糾正 ${nFix} 句、學了 ${nHow} 個說法，都已記進句子本。${this.targets.length ? `複習到 ${nRev}／${this.targets.length} 個生字和句子。` : ""}`, 6000);
+		// 這次聊到的重點整理成記憶：在背景做，不擋畫面
+		const p = this.plugin;
+		const job = this.file && p.remembers(this.cuser()) ? p.memory.remember(this.file.path) : null;
 		this.phase = "start";
 		this.meta = null;
 		this.file = null;
 		this.messages = [];
+		this.memItems = [];
 		this.targets = [];
 		this.doneTargets = new Set();
 		this.drawStart();
-		this.plugin.triggerSync(true);
+		// 等記憶整理完再同步（對話和記憶一起上傳，別台裝置下次聊天就接得上）；太久就先同步，記憶下次再上傳
+		const sync = () => void p.triggerSync(true);
+		if (job) {
+			let timer = 0;
+			const waited = new Promise<void>((ok) => (timer = window.setTimeout(ok, MEMORY_SYNC_WAIT_MS)));
+			void Promise.race([job.then(() => undefined), waited]).then(() => {
+				window.clearTimeout(timer);
+				sync();
+			});
+		} else sync();
 	}
 }

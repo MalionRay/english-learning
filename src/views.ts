@@ -1,7 +1,7 @@
 import { App, ItemView, Modal, Notice, Setting, WorkspaceLeaf } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import { HOME_VIEW, VERIFY_VIEW } from "./constants";
-import { DEBUG_ROOT, logPath } from "./logs";
+import { DEBUG_ROOT, DIAG_KEEP_DAYS, DIAG_ROOT, LOG_ROOT, diagPath, logPath } from "./logs";
 import { LEVEL_LABEL, Level, MAX_WORDS, Question, TYPE_LABEL, parseBank, planFor, planTotal, wordCount } from "./generate";
 import { bankPath, canGenerate, listSources } from "./sources";
 import { FlagLog, loadFlags } from "./flags";
@@ -400,9 +400,11 @@ export class VerifyView extends ItemView {
 	}
 
 	async onOpen() {
-		this.registerEvent(this.app.vault.on("create", (f) => f.path.startsWith("logs/") && this.render()));
-		this.registerEvent(this.app.vault.on("modify", (f) => f.path.startsWith("logs/") && this.render()));
-		this.registerEvent(this.app.vault.on("delete", (f) => f.path.startsWith("logs/") && this.render()));
+		// 「記一筆」和 API／麥克風／同步的狀態是診斷紀錄（debug/diag），其他裝置同步過來時也要重畫
+		const mine = (path: string) => path.startsWith(`${LOG_ROOT}/`) || path.startsWith(`${DIAG_ROOT}/`);
+		this.registerEvent(this.app.vault.on("create", (f) => mine(f.path) && this.render()));
+		this.registerEvent(this.app.vault.on("modify", (f) => mine(f.path) && this.render()));
+		this.registerEvent(this.app.vault.on("delete", (f) => mine(f.path) && this.render()));
 		await this.render();
 	}
 
@@ -449,7 +451,8 @@ export class VerifyView extends ItemView {
 				this.render();
 			};
 		});
-		el.createDiv({ cls: "el-muted", text: `本機寫入：${logPath(p.user, p.deviceId)}` });
+		el.createDiv({ cls: "el-muted", text: `學習紀錄：${logPath(p.user, p.deviceId)}` });
+		el.createDiv({ cls: "el-muted", text: `診斷紀錄（記一筆、同步、語音、AI 呼叫；只留最近 ${DIAG_KEEP_DAYS} 天）：${diagPath(p.user, p.deviceId)}` });
 
 		// 2. append
 		el.createEl("h4", { text: "2. 記一筆" });
@@ -467,7 +470,7 @@ export class VerifyView extends ItemView {
 		el.createDiv({ cls: "el-big", text: String(totals.uniqueTaps) });
 		el.createDiv({
 			cls: "el-muted",
-			text: `原始筆數 ${totals.rawTaps}，UUID 重複 ${totals.duplicates}，壞行 ${totals.badLines}，計算於 ${new Date().toLocaleTimeString()}`,
+			text: `原始筆數 ${totals.rawTaps}，UUID 重複 ${totals.duplicates}，壞行 ${totals.badLines}，計算於 ${new Date().toLocaleTimeString()}（「記一筆」是診斷紀錄，${DIAG_KEEP_DAYS} 天後自動清掉）`,
 		});
 		const devices = Object.keys({ ...totals.byDevice, ...totals.latest }).sort();
 		if (devices.length) {

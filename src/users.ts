@@ -4,13 +4,14 @@
 // 每位使用者自己的設定（例如對話記憶長度）也記在這裡：user-set（key、value），最後一筆為準，所有裝置一致。
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { Level } from "./generate";
-import { LOG_ROOT, listRecursive, safeName } from "./logs";
+import { DIAG_ROOT, LOG_ROOT, listRecursive, safeName } from "./logs";
 
 export const USERS_DIR = "english/users";
-// 這幾個資料夾名稱與 chat.ts、patterns.ts、backup.ts 相同（這裡不 import，避免互相引用）
+// 這幾個資料夾名稱與 chat.ts、patterns.ts、backup.ts、memory.ts 相同（這裡不 import，避免互相引用）
 const CONV_DIR = "conversations";
 const REPORT_DIR = "english/reports";
 const BACKUP_DIR = "backup";
+const MEMORY_DIR = "english/memory";
 
 /** 舊版設定裡的使用者在這個時間「建立」：任何真正的新增或刪除都比它晚，所以不會蓋掉。 */
 export const SEED_TS = "1970-01-01T00:00:00.000Z";
@@ -29,6 +30,7 @@ export interface UserEvent {
 /** 每位使用者自己的設定（存在 english/users，會同步）。 */
 export interface UserPrefs {
 	chatMemory?: number; // 對話記憶長度：AI 看得到最近幾則訊息；0＝整段對話
+	remember?: boolean; // 記得以前的對話（跨對話記憶，src/memory.ts）；沒設定＝開
 }
 
 export interface UserInfo {
@@ -121,10 +123,10 @@ export function convUser(md: string): string | null {
 	return m ? safeName(m[1].replace(/^["']|["']$/g, "")) : null;
 }
 
-/** 這位使用者的資料：答題紀錄、錯誤分析報告的資料夾，以及他的對話檔路徑。 */
+/** 這位使用者的資料：答題紀錄、錯誤分析報告、對話記憶的資料夾，以及他的對話檔路徑。 */
 export function isUserDataPath(path: string, name: string, content?: string): boolean {
 	const n = safeName(name);
-	if (path.startsWith(`${LOG_ROOT}/${n}/`) || path.startsWith(`${REPORT_DIR}/${n}/`)) return true;
+	if (path.startsWith(`${LOG_ROOT}/${n}/`) || path.startsWith(`${REPORT_DIR}/${n}/`) || path.startsWith(`${MEMORY_DIR}/${n}/`)) return true;
 	if (path.startsWith(`${CONV_DIR}/`) && content !== undefined) return convUser(content) === n;
 	return false;
 }
@@ -166,12 +168,13 @@ async function removeFolder(app: App, path: string) {
 
 /**
  * 刪除一位使用者的所有資料（所有裝置寫的都刪，同步後每台都會刪掉）：
- * logs/<name>/、english/reports/<name>/、他的對話檔，並從每一份備份裡拿掉他的資料。
+ * logs/<name>/、debug/diag/<name>/（診斷紀錄）、english/reports/<name>/、english/memory/<name>/（對話記憶）、他的對話檔，
+ * 並從每一份備份裡拿掉他的資料。
  */
 export async function deleteUserData(app: App, name: string): Promise<DeleteResult> {
 	const n = safeName(name);
 	let files = 0;
-	for (const dir of [`${LOG_ROOT}/${n}`, `${REPORT_DIR}/${n}`]) {
+	for (const dir of [`${LOG_ROOT}/${n}`, `${DIAG_ROOT}/${n}`, `${REPORT_DIR}/${n}`, `${MEMORY_DIR}/${n}`]) {
 		const inside = await listRecursive(app, dir);
 		if (!inside.length && !(await app.vault.adapter.exists(dir))) continue;
 		for (const f of inside) {
