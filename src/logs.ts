@@ -101,7 +101,9 @@ export class AppendOnlyWriter {
 			}
 			const f = this.app.vault.getAbstractFileByPath(p);
 			const text = f instanceof TFile ? await this.app.vault.read(f) : await this.app.vault.adapter.read(p);
-			const next = fn(text);
+			let next = fn(text);
+			// 不留 0 位元組的檔案（有些同步方式不處理空檔）：內容清光時留一個換行，讀的地方本來就會跳過空行
+			if (next === "") next = "\n";
 			if (next === null || next === text) return false;
 			if (f instanceof TFile) await this.app.vault.modify(f, next);
 			else await this.app.vault.adapter.write(p, next);

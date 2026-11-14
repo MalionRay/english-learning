@@ -121,7 +121,7 @@
 - 存放：english/memory/<user>/<deviceId>.jsonl（append-only、每台裝置只寫自己的檔），type "mem"：lang（沒有＝英文）、add [{key, text, at}]、remove [key]、conv＋count（AI 整理了哪個對話檔、到第幾則訊息）、since、by "ai"／"user"
 - 重播 replayMemory：結果＝所有加過的減掉所有刪過的（key 不重複使用，改寫＝刪舊的加新的），和紀錄的先後、各裝置時鐘無關——刪掉的不會因為同步順序又跑回來；一模一樣的句子只留新的；done＝每個對話整理到第幾則（取最大）；最新的排前面
 - AI 回的是「修改」不是整份清單：{"add": [...], "update": [{id, text}], "remove": [id]}，沒提到的不動（小模型漏列時不會把記憶清掉）；現有記憶在請求裡編號 m1、m2…；parseMemoryOps 格式不對回 null（當作沒整理成功）；applyOps 一次最多加 4 條、超過 MEMORY_MAX（20）從最舊的開始丟
-- 整理的時機：按「結束對話」（ChatView.end → memory.remember，背景做；等它做完再觸發同步，最多等 15 秒）；沒按就離開的在「對話開始畫面出現時」補整理（catchUp：這位使用者＋這個語言、最近 14 天、一次最多 2 個、10 分鐘內不重複看；別台裝置開始的對話要最後一句超過 30 分鐘才幫忙整理）；學習者在還沒整理的部分至少說了 2 句才整理；續聊後只把新的部分交給 AI
+- 整理的時機：按「結束對話」（ChatView.end → memory.remember，背景做；等它做完再觸發同步，最多等 15 秒）；沒按就離開的在「對話開始畫面出現時」補整理（catchUp：這位使用者＋這個語言、最近 30 天（v0.23.1；0.23.0 是 14 天，使用者實際的對話間隔比較長）、一次最多 2 個、10 分鐘內不重複看；別台裝置開始的對話要最後一句超過 30 分鐘才幫忙整理）；學習者在還沒整理的部分至少說了 2 句才整理；續聊後只把新的部分交給 AI
 - MemoryManager 一次只整理一個對話（後面的要看到前面的結果）；開新對話時前一個還在整理就先等（最多 8 秒）；額度、網路、伺服器的錯不算失敗，AI 回的內容不能用才算（localStorage english-learning:memory-fail），同一個對話失敗 2 次補整理就不再試
 - 角色扮演（餐廳、面試）裡說的不當成事實；不記密碼、證號、帳號、電話、地址；只記學習者自己說的，不記 AI 角色自己的故事
 - 畫面：對話開始畫面有開關「讓 Alex 記得以前聊過的事」和 details「🧠 Alex 記得的事（N）」（每條可以 ✕ 刪掉、「全部忘記」要按兩次、整理中會顯示）；設定 →「使用者」下面「記得以前的對話」每位一個開關
@@ -134,7 +134,7 @@
 - 診斷紀錄寫 debug/diag/<user>/<deviceId>.jsonl（和 logs 同樣的排法，刪除使用者、轉記 Google Cloud 語音用量照舊）；不在備份範圍
 - 自動清理 trimDiag：一般診斷紀錄留 14 天、最多 2000 筆；Google Cloud 語音的用量（tts、source "cloud"）留 62 天，因為每月上限要加總整個月——超過 14 天的只留算用量的欄位，id 不變
 - 讀的地方兩邊都讀、UUID 去重：readCloudUsage（每月用量）、computeTotals（驗證面板的「記一筆」和最新狀態）；還沒更新的裝置繼續寫在 logs 也算得到
-- 舊資料 slimLogs（啟動 90 秒後，和 trimDebug 一起）：這台裝置自己的 logs/*/<deviceId>.jsonl 裡的診斷紀錄先寫進診斷檔（已經有的不重複）、再從學習紀錄拿掉；只動自己寫的檔，別台裝置的等它們自己更新；AppendOnlyWriter.rewrite(path, fn, create) 和 append 排同一個佇列，整理時新寫入的不會掉
+- 舊資料 slimLogs（啟動 90 秒後，和 trimDebug 一起）：這台裝置自己的 logs/*/<deviceId>.jsonl 裡的診斷紀錄先寫進診斷檔（已經有的不重複）、再從學習紀錄拿掉；只動自己寫的檔，別台裝置的等它們自己更新；AppendOnlyWriter.rewrite(path, fn, create) 和 append 排同一個佇列，整理時新寫入的不會掉；內容清光時留一個換行、不留 0 位元組的空檔（v0.23.1：只拿來開發測試的裝置學習紀錄裡全是診斷紀錄，搬完會變空檔，有些同步方式不處理空檔）
 - 驗證面板的「記一筆」現在是診斷紀錄，14 天後合計會歸零（面板上有寫）
 
 ## 錯誤模式分析（src/patterns.ts、src/patternview.ts）

@@ -20,7 +20,7 @@ export const MEMORY_ADD_MAX = 4;
 /** 學習者至少說了幾句（還沒整理過的部分）才值得請 AI 整理。 */
 export const MEMORY_MIN_LEARNER = 2;
 /** 補整理（沒按「結束對話」就離開的）：只看最近幾天的對話、一次最多幾個、多久看一次。 */
-export const CATCHUP_DAYS = 14;
+export const CATCHUP_DAYS = 30;
 export const CATCHUP_MAX = 2;
 export const CATCHUP_EVERY_MS = 10 * 60_000;
 /** 別台裝置開始的對話：最後一句超過這麼久（可能還在聊、或那台自己會整理）才幫忙整理。 */
@@ -339,7 +339,7 @@ export function pendingFrom(path: string, messages: ConvMessage[], state: MemSta
 }
 
 /**
- * 補整理要做哪幾個：這位使用者、這個語言、最近 14 天、還有沒整理的內容；
+ * 補整理要做哪幾個：這位使用者、這個語言、最近 30 天、還有沒整理的內容；
  * 別台裝置開始的要等最後一句過了 30 分鐘；最多 2 個（挑最近的，照時間順序做）。
  */
 export function pickCatchUp(convs: ConvInfo[], state: MemState, o: { user: string; lang: Lang; deviceId: string; now: Date; skip?: Set<string> }): ConvInfo[] {

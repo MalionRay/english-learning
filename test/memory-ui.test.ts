@@ -297,7 +297,7 @@ test("沒按「結束對話」就離開：下次打開對話的開始畫面時�
 		],
 		summaries: [{ add: ["週末要去台南看 90 歲的阿嬤"], update: [], remove: [] }],
 	});
-	// 檔名的日期要在最近 14 天內：換成今天的日期
+	// 檔名的日期要在最近 30 天內：換成今天的日期
 	const today = new Date();
 	const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 	for (const k of [...x.files.keys()].filter((k) => k.startsWith("conversations/"))) {

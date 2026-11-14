@@ -199,6 +199,30 @@ test("瘦身：整理的同時有新的紀錄寫進來，一筆都不會掉", as
 	assert.equal(new Set(d).size, d.length, "沒有重複");
 });
 
+test("學習紀錄裡全部都是診斷紀錄（只拿來開發測試的裝置）：搬完留一個換行，不留 0 位元組的空檔；之後照常寫入", async () => {
+	const { app, files } = makeApp(
+		new Map<string, string>([
+			["logs/ray/ipad-1.jsonl", [entry("s1", "sync"), entry("s2", "sync"), entry("t1", "tts", { source: "system" })].join("\n") + "\n"],
+			["debug/diag/kid/ipad-1.jsonl", entry("old", "sync", {}, daysAgo(90), "kid") + "\n"],
+		]),
+	);
+	const w = new AppendOnlyWriter(app);
+	const r = await slimLogs(app, w, "ipad-1", NOW);
+	assert.deepEqual(r, { moved: 3, files: 1, trimmed: 1 });
+	assert.equal(files.get("logs/ray/ipad-1.jsonl"), "\n");
+	assert.equal(files.get("debug/diag/kid/ipad-1.jsonl"), "\n", "診斷檔全部過期也一樣");
+	assert.deepEqual(ids(files, "debug/diag/ray/ipad-1.jsonl"), ["s1", "s2", "t1"]);
+	assert.deepEqual(await loadUserLogs(app, "ray"), []);
+	const t = await computeTotals(app);
+	assert.equal(t.badLines, 0, "空行不算壞行");
+	assert.deepEqual(await slimLogs(app, w, "ipad-1", NOW), { moved: 0, files: 0, trimmed: 0 }, "再跑一次不會一直重寫");
+	await w.append("logs/ray/ipad-1.jsonl", entry("a1", "answer", { qid: "q1", correct: true }) + "\n");
+	assert.deepEqual(
+		(await loadUserLogs(app, "ray")).map((e: any) => e.id),
+		["a1"],
+	);
+});
+
 test("Google Cloud 語音用量：診斷檔和還沒搬的學習紀錄都算，同一筆只算一次", async () => {
 	const m = cloudMonth();
 	const line = (id: string, chars: number, month = m) => J({ id, ts: new Date().toISOString(), device: "d", user: "ray", type: "tts", source: "cloud", chars, month });

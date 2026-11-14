@@ -277,7 +277,7 @@ test("還沒整理的部分：學習者至少說了兩句才整理；整理過�
 	assert.equal(pendingFrom("conversations/a.md", [...msgs, user("One more thing."), model("Yes?"), user("I bought a bike.")], state), 5);
 });
 
-test("補整理挑哪些：這位使用者、這個語言、最近 14 天、最多 2 個（最近的），照時間順序", async () => {
+test("補整理挑哪些：這位使用者、這個語言、最近 30 天、最多 2 個（最近的），照時間順序", async () => {
 	const { app } = makeApp(
 		new Map<string, string>([
 			["conversations/2026-11-10-ipad-1-1.md", conv({ started: ago(4), msgs: chatty(ago(4)) })],
@@ -305,6 +305,18 @@ test("補整理挑哪些：這位使用者、這個語言、最近 14 天、最�
 	assert.deepEqual(pick(none, { skip: new Set(["conversations/2026-11-13-ipad-1-1.md"]) }), ["conversations/2026-11-11-win-1-1.md", "conversations/2026-11-12-ipad-1-1.md"]);
 	// 在電腦上：iPad 開始的對話也可以幫忙整理（最後一句超過 30 分鐘），自己 5 分鐘前的那個當然可以
 	assert.deepEqual(pick(none, { deviceId: "win-1" }), ["conversations/2026-11-13-ipad-1-1.md", "conversations/2026-11-14-win-1-1.md"]);
+	// 半個月前的對話也補得到（30 天內）；一個多月前的不補
+	const older = replayMemory(["conversations/2026-11-10-ipad-1-1.md", "conversations/2026-11-11-win-1-1.md", "conversations/2026-11-12-ipad-1-1.md", "conversations/2026-11-13-ipad-1-1.md"].map((c) => ev({ conv: c, count: 5 })));
+	const { app: app2 } = makeApp(
+		new Map<string, string>([
+			["conversations/2026-10-29-ipad-1-1.md", conv({ started: ago(16), msgs: chatty(ago(15)) })],
+			["conversations/2026-10-01-ipad-1-1.md", conv({ started: ago(44), msgs: chatty(ago(44)) })],
+		]),
+	);
+	assert.deepEqual(
+		pickCatchUp(await recentConvs(app2, NOW), older, { user: "ray", lang: "en", deviceId: "win-1", now: NOW }).map((c) => c.path),
+		["conversations/2026-10-29-ipad-1-1.md"],
+	);
 	// 記憶關掉又打開：打開以前開始的對話不補整理
 	assert.deepEqual(pick(replayMemory([ev({ since: ago(1.5) })])), ["conversations/2026-11-13-ipad-1-1.md"]);
 	assert.deepEqual(pick(replayMemory([ev({ since: ago(0.5) })])), []);
