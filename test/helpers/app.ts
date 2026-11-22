@@ -34,7 +34,7 @@ export function makeApp(files: FileMap = new Map()) {
 		loadLocalStorage: (k: string) => ls.get(k) ?? null,
 		saveLocalStorage: (k: string, v: unknown) => (v === null ? ls.delete(k) : ls.set(k, v)),
 		workspace: { getActiveFile: () => null, getLeaf: () => ({ openFile: async () => undefined }), onLayoutReady: (f: () => void) => f() },
-		metadataCache: { getFileCache: (f: any) => ({ frontmatter: parseFm(String(files.get(f.path) ?? "")) }) },
+		metadataCache: { on: () => ({}), getFileCache: (f: any) => ({ frontmatter: parseFm(String(files.get(f.path) ?? "")) }) },
 		fileManager: {
 			processFrontMatter: async (f: any, fn: (fm: Record<string, unknown>) => void) => {
 				const s = String(files.get(f.path));

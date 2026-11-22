@@ -107,6 +107,7 @@
 - 對話自適應程度（src/chatlevel.ts，v0.18.0）：每次呼叫依最近 10 則學習者訊息（含這位使用者前 3 次對話）估 1～5 級（小孩最多 4；沒紀錄時成人 3、小孩 2；樣本少時往起點靠、越新越重）。訊息分數：全中文 0.15、被糾正依字的編輯距離（小錯 0.75、重寫 0.1）、夾中文最多 0.5、沒錯 1（1～2 字 0.6）；平均少於 4 字最多 3 級；還沒有 AI 回覆的訊息不算。levelPrompt 加在系統提示：低級短句常用字，高級像朋友聊天；明確要求「自然不等於困難」，不刻意用難字難句。頂端顯示「程度：…」，改變時寫 debug
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
 - 對話檔 conversations/<本地日期>-<deviceId>-<序號>.md：開始的裝置獨佔寫入（append）；每則訊息前有 <!--el-msg {...} --> 供續聊重建歷史；別台裝置只能查看、要開新對話
+- 開始畫面的「之前的對話」（v0.24.1）：對話檔刪除、改名、新增（vault delete／rename／create）或 frontmatter 讀好（metadataCache changed）時，300 毫秒內合併重畫（convTimer）；之前只有畫面重畫時才讀，使用者刪了對話畫面沒更新。正在聊的對話檔被刪掉：leaveDeleted 停錄音朗讀、作廢等待中的回覆、回到開始畫面並提示（不整理記憶、不同步、不會把檔案寫回來）
 - 句子本每位使用者一本：log "phrase-add"／"phrase-remove"（key＝英文正規化後的 cyrb53），加上自動推導的「答錯的句子」：克漏字（含我不知道，整句＝填入答案）、翻譯題（reference／prompt；含 grade 判錯）、聽力（沒聽懂）；relearn 不算；移除後又答錯會再出現（failedSentenceMap＋buildPhraseBook）；舊題庫沒有中文時練習當下即時翻譯
 - 對話中的 SRS 複習（src/chattargets.ts）：開始或續聊時挑到期的生字 5 個、句子 2 句（上次答錯優先；到期不夠才補少量沒複習過的），加進系統提示請 AI 自然使用並製造機會；AI 回 learnerUsed；單字要訊息裡真的出現（含變化形）才算，沒被糾正時就算 AI 沒報也算；用對了記 answer（qid word:/phrase:、correct true、via "chat"、session＝對話檔路徑），每次對話每個目標只記一次；開始畫面可關閉
 - 語音輸入（src/recorder.ts 的 WavRecorder：Web Audio → 16 kHz 單聲道 WAV，最長 60 秒）：🎤 開始、「說完了」送出；錄音直接當 inlineData 送進同一次 chat 呼叫（VOICE_TURN），AI 先把逐字內容寫在 "heard"（保留文法錯誤、中文用繁體）再照常回覆；heard 空的就不存訊息；對話檔的語音訊息標 voice: true／**You 🎤:**。這是對話輸入，不是 v0.12 的口說跟讀評分

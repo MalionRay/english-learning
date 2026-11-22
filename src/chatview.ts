@@ -1,5 +1,5 @@
 // 對話畫面（英文、西班牙文、日文）
-import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { ItemView, Menu, Notice, TAbstractFile, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
 import { stripMarks } from "./generate";
@@ -84,6 +84,7 @@ export class ChatView extends ItemView {
 	private reqSeq = 0; // 送給 AI 的請求編號（結束對話時加一，還沒回來的回覆就作廢）
 	private memItems: MemItem[] = []; // 這次對話帶著的記憶（開始或續聊時讀一次，聊到一半不換）
 	private memEl: HTMLElement | null = null; // 開始畫面的「記得的事」
+	private convTimer = 0; // 對話檔變動後重畫「之前的對話」（合併 300 毫秒內的變動）
 	private memOpen = false; // 清單有沒有展開（重畫時留著）
 	private memTimer: number | null = null;
 
@@ -110,6 +111,27 @@ export class ChatView extends ItemView {
 		this.registerEvent(this.app.vault.on("create", changed));
 		this.registerEvent(this.app.vault.on("modify", changed));
 		this.register(() => this.memTimer && window.clearTimeout(this.memTimer));
+		// 對話檔刪掉、改名、從別台裝置同步進來（或剛讀好 frontmatter）：「之前的對話」馬上重畫（v0.24.1；之前要離開再回來才會更新）
+		const isConv = (path?: string) => !!path && path.startsWith(CONV_DIR + "/") && path.endsWith(".md");
+		const convChanged = (path: string, oldPath?: string) => {
+			if ((!isConv(path) && !isConv(oldPath)) || this.phase !== "start") return;
+			if (this.convTimer) window.clearTimeout(this.convTimer);
+			this.convTimer = window.setTimeout(() => {
+				this.convTimer = 0;
+				if (this.phase === "start") this.drawStart();
+			}, 300);
+		};
+		this.registerEvent(
+			this.app.vault.on("delete", (f: TAbstractFile) => {
+				// 正在聊的對話檔被刪掉：不能再寫進去，回到開始畫面
+				if (this.phase !== "start" && this.file && f.path === this.file.path) this.leaveDeleted();
+				else convChanged(f.path);
+			}),
+		);
+		this.registerEvent(this.app.vault.on("rename", (f: TAbstractFile, old: string) => convChanged(f.path, old)));
+		this.registerEvent(this.app.vault.on("create", (f: TAbstractFile) => convChanged(f.path)));
+		this.registerEvent(this.app.metadataCache.on("changed", (f: TFile) => convChanged(f.path)));
+		this.register(() => this.convTimer && window.clearTimeout(this.convTimer));
 		this.render();
 	}
 
@@ -976,6 +998,24 @@ export class ChatView extends ItemView {
 		this.recorder?.cancel();
 		this.recorder = null;
 		this.stopVoice();
+	}
+
+	/** 正在聊的對話檔被刪掉了：停止錄音和朗讀、還在等的回覆作廢，回到開始畫面（不整理記憶、不同步）。 */
+	private leaveDeleted() {
+		this.recorder?.cancel();
+		this.recorder = null;
+		this.stopVoice();
+		this.reqSeq++;
+		this.sending = false;
+		this.phase = "start";
+		this.meta = null;
+		this.file = null;
+		this.messages = [];
+		this.memItems = [];
+		this.targets = [];
+		this.doneTargets = new Set();
+		this.drawStart();
+		new Notice("這個對話檔已經刪除，回到對話的開始畫面。", 6000);
 	}
 
 	private end() {
