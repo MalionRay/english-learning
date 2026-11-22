@@ -42,7 +42,10 @@ const LS_CHAT = "english-learning:chat"; // { [user]: { topic, article, review }
 export const LS_CHAT_VOICE = "english-learning:chat-voice";
 const LS_CHAT_VOICE_LAST = "english-learning:chat-voice-last";
 export type ChatVoice = "system" | "natural" | "off";
-const HEDGE_MS = 8000; // 超過 8 秒沒回應就再送一次
+// 還沒回應就再送一份相同的請求，最多三份（第二、三份在第幾毫秒送）。免費版偶爾一份卡 20～30 秒、
+// 下一份又很快（2026-11-21 kid 的語音對話：平常 3～5 秒，有三次 18～33 秒；之前 8 秒、語音 12 秒才送第二份，最多兩份）
+export const CHAT_HEDGE_MS = [5000, 12000];
+export const VOICE_HEDGE_MS = [6000, 13000]; // 語音平常就比較久（AI 要先聽寫）
 const TIMEOUT_MS = 45000;
 /** 開新對話時，上一個對話的記憶還在整理：最多等這麼久（等得到的話這次就用得上）。 */
 export const MEMORY_WAIT_MS = 8000;
@@ -709,7 +712,7 @@ export class ChatView extends ItemView {
 				// 日文的回覆還帶平假名和羅馬拼音，1024 偶爾不夠（會被截斷）
 				maxOutputTokens: this.clang() === "ja" ? 2048 : 1024,
 				temperature: 0.9,
-				hedgeAfterMs: voiceBubble ? HEDGE_MS + 4000 : HEDGE_MS,
+				hedgeAfterMs: voiceBubble ? VOICE_HEDGE_MS : CHAT_HEDGE_MS,
 				timeoutMs: TIMEOUT_MS,
 			});
 			const ms = Date.now() - t0;
@@ -753,8 +756,9 @@ export class ChatView extends ItemView {
 			await p.appendText(file, convBlock(mm));
 			await this.savePhrases(reply);
 			if (learnerText !== null) await this.recordUsed(learnerText, res.text, !!reply.correction);
-			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage, ms, ...(voiceBubble ? { voice: true, seconds: voiceSeconds } : {}) }, this.cuser())).catch(() => undefined);
-			if (ms > 8000) p.debug(`chat slow: ${ms} ms (in ${res.usage.inputTokens ?? "?"} / out ${res.usage.outputTokens ?? "?"} tokens${voiceBubble ? ", voice" : ""})`);
+			// copies／winner：送了幾份、用的是第幾份——看得出「再送一份」有沒有幫上忙
+			p.appendLog(p.makeEntry("api", { ok: true, purpose: "chat", model: res.model, usage: res.usage, ms, copies: res.copies, winner: res.winner, ...(voiceBubble ? { voice: true, seconds: voiceSeconds } : {}) }, this.cuser())).catch(() => undefined);
+			if (ms > 8000) p.debug(`chat slow: ${ms} ms (in ${res.usage.inputTokens ?? "?"} / out ${res.usage.outputTokens ?? "?"} tokens${voiceBubble ? ", voice" : ""}; copy ${res.winner ?? "?"} of ${res.copies ?? "?"})`);
 		} catch (e) {
 			if (req !== this.reqSeq) return; // 對話已經結束：不用再提示
 			typing?.setText(`AI 沒有回應：${(e as Error)?.message ?? e}（${voiceBubble ? "請再說一次" : "可以再送一次"}）`);

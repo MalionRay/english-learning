@@ -112,7 +112,7 @@
 - 語音輸入（src/recorder.ts 的 WavRecorder：Web Audio → 16 kHz 單聲道 WAV，最長 60 秒）：🎤 開始、「說完了」送出；錄音直接當 inlineData 送進同一次 chat 呼叫（VOICE_TURN），AI 先把逐字內容寫在 "heard"（保留文法錯誤、中文用繁體）再照常回覆；heard 空的就不存訊息；對話檔的語音訊息標 voice: true／**You 🎤:**。這是對話輸入，不是 v0.12 的口說跟讀評分
 - AI 回覆自動朗讀：每台裝置設定（localStorage english-learning:chat-voice）natural＝Gemini 自然語音（預設；Pronouncer.speakNatural：切成第一句與其他、同時產生、依序播放、不存檔；拿不到就改系統語音）／system＝系統語音／off；點擊「開始對話」「送出」「說完了」時同步呼叫 primeAudio（unlockAudio＋primeSpeech）解鎖 iOS 播放
 - AI 速度測試（src/speedtest.ts；對話開始畫面與指令）：在裝置上量列出模型（純網路）、最短生成、對話大小 JSON（兩次）、thinkingLevel minimal 兩種寫法、其他 flash 模型、自然語音（網路與解碼分開）與主執行緒卡頓，結果寫進 debug 並同步
-- 回應速度：chat 用 hedged 請求（8 秒沒回就再送一次，取先回來的；語音 12 秒），45 秒逾時；api log 記 ms，超過 8 秒寫 debug；使用者訊息寫檔不等待（寫入佇列保持順序）
+- 回應速度：chat 用 hedged 請求，還沒回就再送一份、最多三份（CHAT_HEDGE_MS [5000, 12000]、語音 VOICE_HEDGE_MS [6000, 13000]，從第一份算；v0.23.2，見「回應速度」一節），45 秒逾時；api log 記 ms、copies、winner，超過 8 秒寫 debug；使用者訊息寫檔不等待（寫入佇列保持順序）
 - 練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
 
 ## 跨對話記憶（src/memory.ts，v0.23.0）
@@ -136,6 +136,14 @@
 - 讀的地方兩邊都讀、UUID 去重：readCloudUsage（每月用量）、computeTotals（驗證面板的「記一筆」和最新狀態）；還沒更新的裝置繼續寫在 logs 也算得到
 - 舊資料 slimLogs（啟動 90 秒後，和 trimDebug 一起）：這台裝置自己的 logs/*/<deviceId>.jsonl 裡的診斷紀錄先寫進診斷檔（已經有的不重複）、再從學習紀錄拿掉；只動自己寫的檔，別台裝置的等它們自己更新；AppendOnlyWriter.rewrite(path, fn, create) 和 append 排同一個佇列，整理時新寫入的不會掉；內容清光時留一個換行、不留 0 位元組的空檔（v0.23.1：只拿來開發測試的裝置學習紀錄裡全是診斷紀錄，搬完會變空檔，有些同步方式不處理空檔）
 - 驗證面板的「記一筆」現在是診斷紀錄，14 天後合計會歸零（面板上有寫）
+
+## 回應速度（src/ai.ts 的 hedged，v0.23.2）
+- 原因：使用者 2026-11-22 說 kid 測試的結果是回應太慢。資料：kid 在 iPhone 用語音對話（11/21），平常 3～5 秒，有三次 18～33 秒；10/29 速度測試同一個模型連兩次是 1.8 秒、32 秒——是個別請求偶爾卡住，不是整段時間都慢，所以早一點再送一份最有用；沒有 thinking（usage 沒有 thoughtTokens），不是 thinking 拖慢
+- hedgeAfterMs 可以是陣列：第二、三…份各在第幾毫秒送（都從第一份算）；一個數字照舊＝最多兩份；很快就連不上時馬上送下一份，但總數不超過排好的份數；整體逾時照舊
+- judge（GeminiBackend 用 geminiVerdict）：2xx 才算能用；5xx＝retry（不能用，還在跑的、還沒送的照舊）；429、400 等＝stop（不再多送）。都沒在跑了才把不能用的交回去（「stop」的優先，例如今天額度用完要換模型），GeminiBackend 照舊 5xx 等 1 秒重試、classifyError；逾時的時候手上已經有不能用的就交回它。之前副本很快回 429／503 會贏過慢一點的正常回覆，畫面就顯示錯誤
+- AIResult.copies／winner：送了幾份（伺服器忙重試的那輪也算）、用第幾份；對話的 api 診斷紀錄有這兩個欄位，之後拿來調整時間
+- 批改（翻譯、句子、聽力；gradeTranslation／gradeListening）：之前沒有逾時也不會再送；現在 GRADE_HEDGE_MS [4000, 10000]、GRADE_TIMEOUT_MS 20 秒，放棄時記成待批改（下次開始練習時由同一台裝置補批），訊息分兩種：離線 PENDING_OFFLINE「已記錄，之後連上網路會自動批改」、AI 太慢或出錯 PENDING_SLOW；按鈕顯示「批改中… N 秒」；等批改時答案欄與「我不知道」也鎖住；practice.grading 寫 api 診斷紀錄（purpose grade-translate／grade-phrase／grade-listening，ms、ok、error），超過 6 秒或失敗寫 debug；離線不送也不記
+- 每多送一份就多用一次額度：免費版的每分鐘、每天上限只在 AI Studio 看得到（官方文件沒寫）；目前沒遇過 3.1-flash-lite 的 429，所以最多三份；如果出現每分鐘上限，先把第三份拿掉
 
 ## 錯誤模式分析（src/patterns.ts、src/patternview.ts）
 - 收集最近 60 天的錯誤：翻譯／句子題分數 < 90 且有修正、克漏字打錯（不含「我不知道」）、這位使用者對話裡的 correction；同一句只留一次，最新的最多 80 筆；少於 5 筆不呼叫 AI

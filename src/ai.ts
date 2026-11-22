@@ -13,6 +13,9 @@ export interface AIResult {
 	usage: AIUsage;
 	model: string;
 	finishReason?: string;
+	/** 同一個請求送了幾份（hedged；伺服器忙重試的也算），用的是第幾份的回應（從 1 算）。 */
+	copies?: number;
+	winner?: number;
 }
 
 export interface AIOptions {
@@ -24,8 +27,11 @@ export interface AIOptions {
 	temperature?: number;
 	/** 附加圖片（complete 用；放在提示文字前面）。 */
 	images?: InlineImage[];
-	/** 超過這個毫秒數還沒回應，就再送一次相同的請求，取先回來的（減少偶發的長時間等待）。 */
-	hedgeAfterMs?: number;
+	/**
+	 * 還沒回應就再送一份相同的請求，取先回來、而且能用的那份（減少免費版偶發的長時間等待）。
+	 * 一個數字＝第幾毫秒送第二份；陣列＝第二、三…份各在第幾毫秒送（都從第一份送出時算）。
+	 */
+	hedgeAfterMs?: number | readonly number[];
 	/** 整體逾時（毫秒）。 */
 	timeoutMs?: number;
 	/** 額外的 generationConfig 欄位（例如 thinkingLevel）。 */
@@ -104,51 +110,111 @@ export function classifyError(status: number, body: string, model: string): AIEr
 }
 
 /**
- * 送出請求；超過 hedgeAfterMs 還沒回來就再送一次，取先成功的那個。
- * 兩個都失敗才算失敗；超過 timeoutMs 視為逾時。
+ * hedged 怎麼看一份回應：ok＝用它；retry＝不能用，但還在跑的、還沒送的照舊（伺服器忙）；
+ * stop＝不能用，也不要再多送（超過上限、請求本身有錯）。
  */
-export function hedged<T>(fn: () => Promise<T>, hedgeAfterMs?: number, timeoutMs?: number): Promise<T> {
-	if (!hedgeAfterMs && !timeoutMs) return fn();
+export type HedgeVerdict = "ok" | "retry" | "stop";
+
+/** hedged 送了幾份、用的是第幾份（從 1 算；都沒用到是 0）。 */
+export interface HedgeStats {
+	sent: number;
+	winner: number;
+}
+
+/**
+ * 送出請求；到了 hedgeAfterMs 還沒回來就再送一份，取先回來而且能用的那份（judge；沒給＝回來的都能用）。
+ * 一份回了不能用的結果（例如另一份還在跑時，這份很快回了「伺服器忙」「超過每分鐘上限」）：不能讓它贏過
+ * 還在跑的那份——都沒有在跑了，才把它交回去，讓呼叫的地方照它處理（重試、換模型、提示）。
+ * 很快就失敗（連不上）、還沒到下一份的時間：馬上送下一份。全部失敗才算失敗；超過 timeoutMs 視為逾時。
+ */
+export function hedged<T>(
+	fn: () => Promise<T>,
+	hedgeAfterMs?: number | readonly number[],
+	timeoutMs?: number,
+	judge?: (v: T) => HedgeVerdict,
+	stats?: HedgeStats,
+): Promise<T> {
+	const delays = (typeof hedgeAfterMs === "number" ? [hedgeAfterMs] : hedgeAfterMs ?? []).filter((d) => d > 0);
+	if (!delays.length && !timeoutMs) {
+		if (stats) Object.assign(stats, { sent: 1, winner: 1 });
+		return fn();
+	}
+	const max = 1 + delays.length;
 	return new Promise<T>((resolve, reject) => {
+		const t0 = Date.now();
 		let settled = false;
 		let running = 0;
 		let launched = 0;
+		let stopped = false; // 有一份說不要再送了
+		let unusable: { v: T; n: number; stop: boolean } | null = null;
 		let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
 		let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-		const finish = (ok: boolean, v: unknown) => {
+		const clearHedge = () => {
+			if (hedgeTimer) clearTimeout(hedgeTimer);
+			hedgeTimer = null;
+		};
+		const finish = (ok: boolean, v: unknown, n = 0) => {
 			if (settled) return;
 			settled = true;
-			if (hedgeTimer) clearTimeout(hedgeTimer);
+			clearHedge();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
+			if (stats) Object.assign(stats, { sent: launched, winner: n });
 			if (ok) resolve(v as T);
 			else reject(v);
 		};
+		const giveBack = () => finish(true, unusable!.v, unusable!.n);
+		// 下一份在第幾毫秒送（從第一份算）；已經過了就馬上送
+		const schedule = () => {
+			clearHedge();
+			if (settled || stopped || launched >= max) return;
+			hedgeTimer = setTimeout(
+				() => {
+					hedgeTimer = null;
+					if (!settled && !stopped && launched < max) launch();
+				},
+				Math.max(0, delays[launched - 1] - (Date.now() - t0)),
+			);
+		};
 		const launch = () => {
 			running++;
-			launched++;
+			const n = ++launched;
+			schedule();
 			fn().then(
-				(v) => finish(true, v),
+				(v) => {
+					running--;
+					const verdict = judge ? judge(v) : "ok";
+					if (verdict === "ok") return finish(true, v, n);
+					if (verdict === "stop") {
+						stopped = true;
+						clearHedge();
+					}
+					// 留著交回去用；「不要再送」的比「伺服器忙」重要（例如今天額度用完要換模型）
+					if (!unusable || (verdict === "stop" && !unusable.stop)) unusable = { v, n, stop: verdict === "stop" };
+					if (running === 0) giveBack();
+				},
 				(e) => {
 					running--;
-					if (running > 0) return; // 另一個還在跑：等它
-					if (launched >= 2 || !hedgeAfterMs) return finish(false, e);
-					// 第一次很快就失敗、還沒到「再送一次」的時間：馬上再送。
-					// 只取消「再送一次」的計時器；整體逾時要留著，不然第二次卡住時會永遠等下去
-					if (hedgeTimer) clearTimeout(hedgeTimer);
-					hedgeTimer = null;
+					if (running > 0) return; // 另一份還在跑：等它
+					if (unusable) return giveBack();
+					if (stopped || launched >= max) return finish(false, e);
+					// 很快就失敗、還沒到下一份的時間：馬上送下一份。
+					// 只是提早送；整體逾時要留著，不然下一份卡住時會永遠等下去
 					launch();
 				},
 			);
 		};
 		launch();
-		if (hedgeAfterMs)
-			hedgeTimer = setTimeout(() => {
-				hedgeTimer = null;
-				if (!settled && launched < 2) launch();
-			}, hedgeAfterMs);
 		if (timeoutMs)
-			timeoutTimer = setTimeout(() => finish(false, new AIError(`AI 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應，請再送一次。`, undefined, "", "network")), timeoutMs);
+			timeoutTimer = setTimeout(() => {
+				if (unusable) return giveBack(); // 已經有一份回了不能用的結果：交回去，比「逾時」清楚
+				finish(false, new AIError(`AI 超過 ${Math.round(timeoutMs / 1000)} 秒沒有回應，請再送一次。`, undefined, "", "network"));
+			}, timeoutMs);
 	});
+}
+
+/** Gemini 的回應能不能用：2xx 可以；5xx（伺服器忙）不能用但可以再試；其他（429 超過上限、400…）不要再多送。 */
+export function geminiVerdict(r: { status: number }): HedgeVerdict {
+	return r.status >= 200 && r.status < 300 ? "ok" : r.status >= 500 ? "retry" : "stop";
 }
 
 /**
@@ -218,11 +284,17 @@ export class GeminiBackend implements AIBackend {
 				throw new AIError("沒有網路連線，或連不到 Google。", undefined, String((e as Error)?.message ?? e), "network");
 			}
 		};
-		let res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
+		const first: HedgeStats = { sent: 0, winner: 0 };
+		let res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs, geminiVerdict, first);
+		let copies = first.sent;
+		let winner = first.winner;
 		// Google 伺服器忙（5xx）：等一下自動重試一次
 		if (res.status >= 500) {
 			await new Promise((ok) => setTimeout(ok, RETRY_5XX_MS));
-			res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs);
+			const again: HedgeStats = { sent: 0, winner: 0 };
+			res = await hedged(post, opts.hedgeAfterMs, opts.timeoutMs, geminiVerdict, again);
+			winner = copies + again.winner;
+			copies += again.sent;
 		}
 
 		if (res.status < 200 || res.status >= 300) throw classifyError(res.status, res.text?.slice(0, 2000) ?? "", this.model);
@@ -238,6 +310,8 @@ export class GeminiBackend implements AIBackend {
 		return {
 			text,
 			finishReason: cand?.finishReason,
+			copies,
+			winner,
 			model: j?.modelVersion ?? this.model,
 			usage: {
 				inputTokens: um.promptTokenCount,

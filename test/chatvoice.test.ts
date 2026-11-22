@@ -2,7 +2,7 @@ import "./helpers/dom";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hedged, AIError } from "../src/ai";
-import { ChatView, LS_CHAT_VOICE } from "../src/chatview";
+import { CHAT_HEDGE_MS, ChatView, LS_CHAT_VOICE, VOICE_HEDGE_MS } from "../src/chatview";
 import { VOICE_TURN, parseHeard } from "../src/chat";
 import { downsample, encodeWav, trimSilence } from "../src/recorder";
 import { makeApp, NO_MEMORY } from "./helpers/app";
@@ -87,7 +87,11 @@ test("語音訊息：錄音直接送 AI，顯示聽到的內容並存進對話",
 	assert.equal(last.role, "user");
 	assert.equal(last.text, VOICE_TURN);
 	assert.equal(last.media[0].mimeType, "audio/wav");
-	assert.ok(calls[1].o.hedgeAfterMs > 0 && calls[1].o.timeoutMs > 0);
+	// 語音平常比較久：第二、三份晚一點才送（v0.23.2）；文字的開場用一般的
+	assert.deepEqual(calls[1].o.hedgeAfterMs, VOICE_HEDGE_MS);
+	assert.deepEqual(calls[0].o.hedgeAfterMs, CHAT_HEDGE_MS);
+	assert.deepEqual([CHAT_HEDGE_MS, VOICE_HEDGE_MS], [[5000, 12000], [6000, 13000]]);
+	assert.ok(calls[1].o.timeoutMs > 0);
 	const bubbles = [...view.contentEl.querySelectorAll(".el-bubble-user")].map((b: any) => b.textContent);
 	assert.deepEqual(bubbles, ["🎤 I go to 公司 yesterday"]);
 	const conv = [...files.entries()].find(([k]) => k.startsWith("conversations/"))![1] as string;

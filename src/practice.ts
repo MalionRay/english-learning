@@ -284,6 +284,14 @@ export function nearMiss(typed: string, answer: string): boolean {
 /** 正在補批改離線時的作答（所有練習畫面共用：同一題不要批改兩次）。 */
 let gradingPending = false;
 
+export const PENDING_OFFLINE = "已記錄，之後連上網路會自動批改";
+export const PENDING_SLOW = "AI 這次太慢沒有回應，先記下來，下次開始練習時會自動批改";
+
+/** 這題沒批改到時要怎麼說：離線，還是 AI 太慢或出錯。 */
+export function pendingNote(e: unknown): string {
+	return (e as Error)?.message === "offline" ? PENDING_OFFLINE : PENDING_SLOW;
+}
+
 export class PracticeView extends ItemView {
 	private phase: Phase = "start";
 	private busyText = "";
@@ -793,19 +801,19 @@ export class PracticeView extends ItemView {
 			if (this.answered) return;
 			this.answered = true;
 			lock();
-			send.setText("批改中…");
 			let res: { correct?: boolean; score?: number; feedback?: string; pending?: boolean };
+			let note = "";
 			try {
-				if (!navigator.onLine) throw new Error("offline");
-				const g = await gradeListening(this.plugin.fastBackend(), d.text, d.zh, text, d.level, d.lang);
+				const g = await this.grading(send, "grade-listening", () => gradeListening(this.plugin.fastBackend(), d.text, d.zh, text, d.level, d.lang));
 				res = { correct: g.correct, score: g.score, feedback: g.feedback };
 			} catch (e) {
-				this.plugin.debug(`listening grade failed: ${(e as Error)?.message ?? e}`);
 				res = { pending: true };
+				note = pendingNote(e);
 			}
+			send.setText("已送出");
 			this.record(pq, { ...res, text });
 			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : res.correct ? "is-ok" : "is-bad"}` });
-			fb.createDiv({ cls: "el-verdict", text: res.pending ? "已記錄，之後連上網路會自動批改" : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
+			fb.createDiv({ cls: "el-verdict", text: res.pending ? note : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
 			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
 			reveal(fb);
 			this.nextButton(card);
@@ -898,18 +906,18 @@ export class PracticeView extends ItemView {
 			if (this.answered) return;
 			this.answered = true;
 			lock();
-			send.setText("批改中…");
 			let res: { correct?: boolean; score?: number; feedback?: string; corrected?: string; pending?: boolean };
+			let note = "";
 			try {
-				if (!navigator.onLine) throw new Error("offline");
-				res = await gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.levelOf(this.user), this.lang);
+				res = await this.grading(send, "grade-phrase", () => gradeTranslation(this.plugin.fastBackend(), pq.q as TranslateQ, text, this.plugin.levelOf(this.user), this.lang));
 			} catch (e) {
-				this.plugin.debug(`phrase grade failed: ${(e as Error)?.message ?? e}`);
 				res = { pending: true };
+				note = pendingNote(e);
 			}
+			send.setText("已送出");
 			this.record(pq, { ...res, text });
 			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : res.correct ? "is-ok" : "is-bad"}` });
-			fb.createDiv({ cls: "el-verdict", text: res.pending ? "已記錄，之後連上網路會自動批改" : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
+			fb.createDiv({ cls: "el-verdict", text: res.pending ? note : `${res.correct ? "✓" : "✗"} ${res.score} 分` });
 			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
 			if (res.corrected && res.corrected !== text) {
 				fb.createDiv({ cls: "el-muted", text: "修改後：" });
@@ -1258,14 +1266,14 @@ export class PracticeView extends ItemView {
 		const giveUp = row.createEl("button", { text: "我不知道" });
 		const out = card.createDiv();
 
-		const finish = (res: { correct?: boolean; pending?: boolean; score?: number; feedback?: string; corrected?: string; dontKnow?: boolean }, text: string) => {
+		const finish = (res: { correct?: boolean; pending?: boolean; note?: string; score?: number; feedback?: string; corrected?: string; dontKnow?: boolean }, text: string) => {
 			ta.disabled = true;
 			send.disabled = true;
 			giveUp.disabled = true;
 			this.record(pq, { correct: res.correct, pending: res.pending, text, score: res.score, feedback: res.feedback, corrected: res.corrected, dontKnow: res.dontKnow });
 			const ok = res.correct === true;
 			const fb = out.createDiv({ cls: `el-feedback ${res.pending ? "" : ok ? "is-ok" : "is-bad"}` });
-			if (res.pending) fb.createDiv({ cls: "el-verdict", text: "已記錄，之後連上網路會自動批改" });
+			if (res.pending) fb.createDiv({ cls: "el-verdict", text: res.note ?? PENDING_OFFLINE });
 			else if (res.score !== undefined) fb.createDiv({ cls: "el-verdict", text: `${ok ? "✓" : "✗"} ${res.score} 分` });
 			else fb.createDiv({ cls: "el-verdict", text: "參考答案" });
 			if (res.feedback) fb.createDiv({ cls: "el-explain", text: res.feedback });
@@ -1291,17 +1299,45 @@ export class PracticeView extends ItemView {
 			if (!text) return new Notice("先輸入你的翻譯");
 			if (this.answered) return;
 			this.answered = true;
-			send.setText("批改中…");
 			send.disabled = true;
+			ta.disabled = giveUp.disabled = true;
 			try {
-				if (!navigator.onLine) throw new Error("offline");
-				const r = await gradeTranslation(this.plugin.fastBackend(), q, text, pq.bank.level, this.lang);
+				const r = await this.grading(send, "grade-translate", () => gradeTranslation(this.plugin.fastBackend(), q, text, pq.bank.level, this.lang));
+				send.setText("已送出");
 				finish({ correct: r.correct, score: r.score, feedback: r.feedback, corrected: r.corrected }, text);
 			} catch (e) {
-				this.plugin.debug(`grade failed: ${(e as Error)?.message ?? e}`);
-				finish({ pending: true }, text);
+				send.setText("已送出");
+				finish({ pending: true, note: pendingNote(e) }, text);
 			}
 		};
+	}
+
+	/**
+	 * AI 批改（翻譯、句子、聽力）：按鈕上顯示等了幾秒，並記下花了多久
+	 * （api 診斷紀錄 purpose grade-*；超過 6 秒或失敗也寫 debug，之後查得到是哪裡慢）。
+	 * 慢的時候怎麼辦在 grade.ts：4 秒、10 秒還沒回就各再送一份，20 秒都沒有就放棄（記成待批改）。
+	 */
+	private async grading<T>(btn: HTMLButtonElement, purpose: string, run: () => Promise<T>): Promise<T> {
+		if (!navigator.onLine) throw new Error("offline");
+		const p = this.plugin;
+		const t0 = Date.now();
+		btn.setText("批改中…");
+		const tick = window.setInterval(() => btn.setText(`批改中… ${Math.floor((Date.now() - t0) / 1000)} 秒`), 1000);
+		let ok = false;
+		let err = "";
+		try {
+			const r = await run();
+			ok = true;
+			return r;
+		} catch (e) {
+			err = (e as Error)?.message ?? String(e);
+			throw e;
+		} finally {
+			window.clearInterval(tick);
+			const ms = Date.now() - t0;
+			p.appendLog(p.makeEntry("api", { ok, purpose, ms, ...(err ? { error: err.slice(0, 200) } : {}) }, this.user)).catch(() => undefined);
+			if (!ok || ms > 6000) p.debug(`${purpose} ${ok ? "slow" : "failed"}: ${ms} ms${err ? ` (${err})` : ""}`);
+		}
 	}
 
 	private record(

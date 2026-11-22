@@ -12,6 +12,14 @@ export interface GradeResult {
 
 export const PASS = 70;
 
+/**
+ * 批改的等待（v0.23.2）：免費版的回應時間變化很大（平常 1～2 秒，偶爾卡 20～40 秒，2026-10-29 iPad 實測），
+ * 所以 4 秒沒回就再送一份、10 秒再一份，取先回來的；20 秒都沒有就放棄（練習畫面記成待批改，下次開始練習時自動補批）。
+ */
+export const GRADE_HEDGE_MS = [4000, 10000];
+export const GRADE_TIMEOUT_MS = 20000;
+const WAIT = { hedgeAfterMs: GRADE_HEDGE_MS, timeoutMs: GRADE_TIMEOUT_MS };
+
 function system(level: Level, lang: Lang = "en"): string {
 	if (lang !== "en") {
 		const T = LANG[lang].english;
@@ -44,7 +52,7 @@ export async function gradeTranslation(ai: AIBackend, q: TranslateQ, answer: str
 	const prompt = `Chinese sentence: ${q.prompt}
 Reference translation: ${q.reference}
 Learner's translation: ${answer.trim()}`;
-	const res = await ai.complete(prompt, { system: system(level, lang), json: true, maxOutputTokens: 512, temperature: 0.2 });
+	const res = await ai.complete(prompt, { system: system(level, lang), json: true, maxOutputTokens: 512, temperature: 0.2, ...WAIT });
 	let j: { score?: unknown; feedback?: unknown; corrected?: unknown };
 	try {
 		j = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
@@ -79,7 +87,7 @@ Score 0-100: 90+ fully understood; 70-89 main idea right with small gaps; below 
 Return ONLY JSON {"score": <integer>, "feedback": "<繁體中文（台灣用語）1–2 句：聽懂的部分、漏掉或誤解的部分>"}`;
 	const prompt = `${L} sentence: ${english}
 ${zhRef ? `Reference Chinese meaning: ${zhRef}\n` : ""}Learner's explanation: ${answer.trim()}`;
-	const res = await ai.complete(prompt, { system, json: true, maxOutputTokens: 400, temperature: 0.2 });
+	const res = await ai.complete(prompt, { system, json: true, maxOutputTokens: 400, temperature: 0.2, ...WAIT });
 	let j: { score?: unknown; feedback?: unknown };
 	try {
 		j = JSON.parse(res.text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
