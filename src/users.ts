@@ -31,6 +31,27 @@ export interface UserEvent {
 export interface UserPrefs {
 	chatMemory?: number; // 對話記憶長度：AI 看得到最近幾則訊息；0＝整段對話
 	remember?: boolean; // 記得以前的對話（跨對話記憶，src/memory.ts）；沒設定＝開
+	correction?: CorrectionMode; // 對話的糾正方式（v0.24.0）；沒設定＝auto
+}
+
+/**
+ * 對話的糾正方式（v0.24.0，使用者 2026-11-22 要求像真人老師一樣在對話裡當場糾正，每位使用者可以選）：
+ * auto＝自動（小錯順口重說、重要的錯一句話提醒、同樣的錯又出現時請他再說一次）；
+ * recast＝順口帶過就好（只在回話裡用對的說法重說，不停下來講）；tip＝每次都提醒。
+ */
+export type CorrectionMode = "auto" | "recast" | "tip";
+export const CORRECTION_MODES: readonly CorrectionMode[] = ["auto", "recast", "tip"];
+export const CORRECTION_DEFAULT: CorrectionMode = "auto";
+export const CORRECTION_LABEL: Record<CorrectionMode, string> = { auto: "自動", recast: "順口帶過就好", tip: "每次都提醒" };
+export const CORRECTION_DESC: Record<CorrectionMode, string> = {
+	auto: "小錯順口用對的說法重說；重要的錯用一句話提醒；同樣的錯又出現時，請你再說一次",
+	recast: "只在回話時順口用對的說法重說，不停下來講",
+	tip: "每個錯都用一句話提醒；同樣的錯又出現時，請你再說一次",
+};
+
+/** 只接受選項裡的值，其他（沒設定、舊資料、亂填）用預設的「自動」。 */
+export function normalizeCorrection(v: unknown): CorrectionMode {
+	return (CORRECTION_MODES as readonly unknown[]).includes(v) ? (v as CorrectionMode) : CORRECTION_DEFAULT;
 }
 
 export interface UserInfo {

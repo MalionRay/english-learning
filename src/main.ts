@@ -38,7 +38,7 @@ import { wordKey } from "./words";
 import { backupNow, maybeAutoBackup } from "./backup";
 import { FIX_DIR, FixOutcome, makeFix } from "./fixes";
 import type { Bank, Question } from "./generate";
-import { DeleteResult, USERS_DIR, UserInfo, UserPrefs, checkNewName, deleteUserData, loadUserEvents, normalizeChatMemory, replayUsers, seedEvents, usersPath } from "./users";
+import { DeleteResult, USERS_DIR, UserInfo, UserPrefs, checkNewName, deleteUserData, loadUserEvents, normalizeChatMemory, normalizeCorrection, type CorrectionMode, replayUsers, seedEvents, usersPath } from "./users";
 import { AddUserModal } from "./userview";
 import { LANG, LANGS, Lang, langOf } from "./lang";
 import { MemEvent, MemoryManager, memoryPath } from "./memory";
@@ -255,6 +255,11 @@ export default class EnglishLearningPlugin extends Plugin {
 	/** 這位使用者的對話記憶長度：AI 看得到最近幾則訊息（0＝整段對話）；沒設定是 50。 */
 	chatMemoryOf(name: string): number {
 		return normalizeChatMemory(this.userList.find((x) => x.name === name)?.prefs.chatMemory);
+	}
+
+	/** 這位使用者的對話糾正方式（自動／順口帶過就好／每次都提醒）；沒設定是自動。 */
+	correctionOf(name: string): CorrectionMode {
+		return normalizeCorrection(this.userList.find((x) => x.name === name)?.prefs.correction);
 	}
 
 	/** 這位使用者要不要讓 AI 記得以前的對話（跨對話記憶）；沒設定是要。 */

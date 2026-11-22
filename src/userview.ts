@@ -2,7 +2,7 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import type EnglishLearningPlugin from "./main";
 import type { Level } from "./generate";
-import { CHAT_MEMORY_DEFAULT, CHAT_MEMORY_OPTIONS, LEVEL_NAME, chatMemoryLabel, checkNewName } from "./users";
+import { CHAT_MEMORY_DEFAULT, CHAT_MEMORY_OPTIONS, CORRECTION_DEFAULT, CORRECTION_DESC, CORRECTION_LABEL, CORRECTION_MODES, CorrectionMode, LEVEL_NAME, chatMemoryLabel, checkNewName } from "./users";
 import { MEMORY_MAX } from "./memory";
 
 export class AddUserModal extends Modal {
@@ -131,6 +131,29 @@ export function drawUsersSection(container: HTMLElement, plugin: EnglishLearning
 				try {
 					await plugin.setUserPref(u.name, "chatMemory", Number(v));
 					new Notice(`${u.name} 的對話記憶：${chatMemoryLabel(Number(v))}`);
+				} catch (e) {
+					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
+				}
+			});
+		});
+	}
+
+	// 對話的糾正方式（v0.24.0）：每位使用者各自選，存在 english/users，所有裝置一樣
+	new Setting(container)
+		.setName("對話的糾正方式")
+		.setDesc(
+			"說錯時 AI 怎麼在對話裡當場糾正（像真人老師）：" +
+				CORRECTION_MODES.map((m) => `「${CORRECTION_LABEL[m]}」${CORRECTION_DESC[m]}`).join("；") +
+				"。中文說明都收在 AI 回覆下面的「📝 為什麼？」。每位使用者各自設定，所有裝置一樣。",
+		)
+		.setHeading();
+	for (const u of users) {
+		new Setting(container).setName(u.name).addDropdown((d) => {
+			for (const m of CORRECTION_MODES) d.addOption(m, CORRECTION_LABEL[m] + (m === CORRECTION_DEFAULT ? "（預設）" : ""));
+			d.setValue(plugin.correctionOf(u.name)).onChange(async (v) => {
+				try {
+					await plugin.setUserPref(u.name, "correction", v as CorrectionMode);
+					new Notice(`${u.name} 的糾正方式：${CORRECTION_LABEL[v as CorrectionMode]}`);
 				} catch (e) {
 					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
 				}

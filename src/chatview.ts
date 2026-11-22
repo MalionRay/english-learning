@@ -21,7 +21,8 @@ import {
 	phraseKey,
 } from "./chat";
 
-import { parseHeard, voiceTurn } from "./chat";
+import { FixState, fixPrompt, focusRange, parseHeard, voiceTurn } from "./chat";
+import { CORRECTION_DESC, CORRECTION_DEFAULT, CORRECTION_LABEL, CORRECTION_MODES, CorrectionMode } from "./users";
 import { LANG, Lang, langOf, personaName, tokenize } from "./lang";
 import { langSelect } from "./langview";
 import { WavRecorder, arrayBufferToBase64, recordingSupported } from "./recorder";
@@ -206,6 +207,28 @@ export class ChatView extends ItemView {
 		});
 		// 讓文章選單出現在情境下面
 		el.appendChild(artRow);
+		// 糾正方式：每位使用者各自設定（存在 english/users，所有裝置一樣；設定頁也可以改）
+		el.createDiv({ cls: "el-row el-fix-mode" }, (r) => {
+			r.createSpan({ text: "糾正方式" });
+			const sel = r.createEl("select", { cls: "dropdown" });
+			for (const m of CORRECTION_MODES) sel.createEl("option", { text: CORRECTION_LABEL[m] + (m === CORRECTION_DEFAULT ? "（預設）" : ""), value: m });
+			const user = p.user;
+			sel.value = p.correctionOf(user);
+			const desc = r.createSpan({ cls: "el-muted", text: CORRECTION_DESC[sel.value as CorrectionMode] });
+			sel.onchange = async () => {
+				const v = sel.value as CorrectionMode;
+				desc.setText(CORRECTION_DESC[v]);
+				sel.disabled = true;
+				try {
+					await p.setUserPref(user, "correction", v);
+				} catch (e) {
+					new Notice(`沒存到：${(e as Error)?.message ?? e}`);
+					sel.value = p.correctionOf(user);
+					desc.setText(CORRECTION_DESC[sel.value as CorrectionMode]);
+				}
+				sel.disabled = false;
+			};
+		});
 		el.createDiv({ cls: "el-row" }, (r) => {
 			r.createSpan({ text: "AI 回覆朗讀" });
 			const sel = r.createEl("select", { cls: "dropdown" });
@@ -707,7 +730,8 @@ export class ChatView extends ItemView {
 					chatSystemPrompt(this.meta.level, this.topic, this.article || undefined, this.clang()) +
 					memoryPrompt(this.memItems, this.clang()) +
 					levelPrompt(this.levelEstimate(), this.meta.level, this.clang()) +
-					targetsPrompt(this.activeTargets(), this.meta.level, this.clang()),
+					targetsPrompt(this.activeTargets(), this.meta.level, this.clang()) +
+					fixPrompt(p.correctionOf(this.cuser()), this.meta.level, this.clang(), this.fixState()),
 				json: true,
 				// 日文的回覆還帶平假名和羅馬拼音，1024 偶爾不夠（會被截斷）
 				maxOutputTokens: this.clang() === "ja" ? 2048 : 1024,
@@ -825,6 +849,14 @@ export class ChatView extends ItemView {
 		}
 	}
 
+	/** 這次回覆時的糾正狀態：上一則 AI 請他再說一次（這一句可能就是重說）、最近三則裡才請過。 */
+	private fixState(): FixState {
+		const models = this.messages.filter((m) => m.role === "model").map((m) => parseReply(m.text));
+		const last = models[models.length - 1]?.correction;
+		if (last?.style === "retry") return { retryTarget: last.corrected, retryFocus: last.focus };
+		return models.slice(-3).some((r) => r.correction?.style === "retry") ? { recentRetry: true } : {};
+	}
+
 	/** 糾正與「怎麼說」都記進句子本（同一句不重複）。 */
 	private async savePhrases(r: ChatReply) {
 		const p = this.plugin;
@@ -845,12 +877,23 @@ export class ChatView extends ItemView {
 			list.createDiv({ cls: `el-bubble el-bubble-user${m.voice ? " is-voice" : ""}`, text: m.voice ? `🎤 ${m.text}` : m.text });
 		} else {
 			const r = reply ?? parseReply(m.text);
+			// 請他再說一次、他說對了：在他那一句標「改對了」
+			if (r.retryResult === "ok") {
+				const mine = list.querySelectorAll(".el-bubble-user");
+				mine[mine.length - 1]?.createSpan({ cls: "el-retry-ok", text: "✓ 改對了" });
+			}
+			// 糾正在 AI 說的話裡（v0.24.0）：改對的字標粗；中文說明收起來，想看再點
+			const b = list.createDiv({ cls: "el-bubble el-bubble-ai" });
+			this.englishLine(b, r.reply, r.replyZh, true, { reading: r.replyReading, romaji: r.replyRomaji }, r.correction?.focus);
+			if (reply && r.correction?.style === "retry") b.createDiv({ cls: "el-chat-retry", text: "🎤 換你再說一次" });
 			if (r.correction) {
-				const box = list.createDiv({ cls: "el-chat-box el-chat-fix" });
-				box.createDiv({ cls: "el-chat-box-title", text: "✏️ 修正（已記入句子本）" });
-				box.createDiv({ cls: "el-d-typed", text: r.correction.original });
-				this.englishLine(box, r.correction.corrected, undefined, false, r.correction);
-				if (r.correction.explanation) box.createDiv({ cls: "el-muted", text: r.correction.explanation });
+				const c = r.correction;
+				const box = list.createEl("details", { cls: "el-chat-box el-chat-fix" });
+				box.createEl("summary", { cls: "el-chat-box-title", text: c.style && c.style !== "silent" ? "📝 為什麼？" : "📝 可以說得更好" });
+				box.createDiv({ cls: "el-d-typed", text: c.original });
+				this.englishLine(box, c.corrected, undefined, false, c);
+				if (c.explanation) box.createDiv({ cls: "el-muted", text: c.explanation });
+				box.createDiv({ cls: "el-muted el-small", text: "已記入句子本" });
 			}
 			for (const h of r.howto) {
 				const box = list.createDiv({ cls: "el-chat-box el-chat-tip" });
@@ -859,25 +902,28 @@ export class ChatView extends ItemView {
 				if (h.alt) this.englishLine(box, h.alt);
 				if (h.note) box.createDiv({ cls: "el-muted", text: h.note });
 			}
-			const b = list.createDiv({ cls: "el-bubble el-bubble-ai" });
-			this.englishLine(b, r.reply, r.replyZh, true, { reading: r.replyReading, romaji: r.replyRomaji });
 		}
 		list.lastElementChild?.scrollIntoView({ block: "end" });
 	}
 
 	/** 英文：逐字可點（唸、看中文、加入生字本）、🔊 唸整句、「中」看翻譯。 */
-	private englishLine(parent: HTMLElement, text: string, zh?: string, markTargets = false, pron?: { reading?: string; romaji?: string }) {
+	private englishLine(parent: HTMLElement, text: string, zh?: string, markTargets = false, pron?: { reading?: string; romaji?: string }, focus?: string) {
 		const lang = this.clang();
 		const targetWords = markTargets ? this.activeTargets().filter((t) => t.kind === "word") : [];
 		const wrap = parent.createDiv({ cls: "el-line-wrap" });
 		const line = wrap.createDiv({ cls: "el-line" });
 		const words = line.createSpan({ cls: "el-words" });
+		const hit = focusRange(text, focus); // 糾正時改對的字（標粗）
+		let pos = 0;
 		for (const tok of tokenize(text, lang)) {
+			const start = pos;
+			pos += tok.text.length;
 			if (!tok.word) {
 				words.appendChild(document.createTextNode(tok.text));
 				continue;
 			}
 			const w = words.createSpan({ cls: "el-w", text: tok.text });
+			if (hit && start < hit[1] && pos > hit[0]) w.addClass("el-fix-word");
 			if (targetWords.some((t) => !t.en.includes(" ") && mentionsWord(tok.text, t, lang))) w.addClass("el-target-word"); // AI 用到了複習的字
 			w.onclick = (e) => this.wordMenu(e, tok.text, text);
 		}

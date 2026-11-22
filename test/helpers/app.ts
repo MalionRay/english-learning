@@ -90,6 +90,7 @@ export function makeApp(files: FileMap = new Map()) {
 
 /** 假外掛用：沒開跨對話記憶（和記憶無關的對話測試用這個）。 */
 export const NO_MEMORY = {
+	correctionOf: () => "auto", // 對話的糾正方式（v0.24.0）：測試預設自動
 	remembers: () => false,
 	setRemember: async () => undefined,
 	memory: {

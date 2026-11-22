@@ -4,6 +4,7 @@ import type { ChoiceQ, Level, Question, TranslateQ } from "./generate";
 import { fillBlank } from "./generate";
 import { audioKey } from "./pronounce";
 import { LANG, Lang, langOf, learnerLine, normSentence, persona } from "./lang";
+import type { CorrectionMode } from "./users";
 
 export const CONV_DIR = "conversations";
 export const PHRASE_PREFIX = "phrase:";
@@ -15,7 +16,19 @@ export interface Correction {
 	zh: string; // 學習者想表達的意思（繁中）——之後當句子練習的題目
 	reading?: string; // 日文：修正句的平假名
 	romaji?: string;
+	style?: FixStyle; // 在對話裡怎麼糾正的（v0.24.0；舊的訊息沒有）
+	focus?: string; // 回覆裡改對的那幾個字（畫面標粗）；一定出現在 reply 裡
 }
+
+/**
+ * 在對話裡怎麼糾正（v0.24.0，像真人老師當場糾正）：recast＝順口用對的說法重說；tip＝一句話提醒；
+ * retry＝請他再說一次；silent＝小錯，沒說出來（只記在修正裡）。
+ */
+export type FixStyle = "recast" | "tip" | "retry" | "silent";
+export const FIX_STYLES: readonly FixStyle[] = ["recast", "tip", "retry", "silent"];
+export const FIX_STYLE_LABEL: Record<FixStyle, string> = { recast: "順口重說", tip: "一句話提醒", retry: "請你再說一次", silent: "沒有說出來" };
+/** 請他再說一次之後，他那一句的結果：ok＝改對了；again＝還是不對（AI 再說一次正確的，不再要求）；skip＝他說了別的。 */
+export type RetryResult = "ok" | "again" | "skip";
 
 export interface HowTo {
 	zh: string;
@@ -33,6 +46,7 @@ export interface ChatReply {
 	replyZh: string;
 	replyReading?: string; // 日文：回覆的平假名
 	replyRomaji?: string; // 日文：回覆的羅馬拼音
+	retryResult?: RetryResult; // 上一則請他再說一次時才有
 }
 
 export interface Topic {
@@ -65,7 +79,7 @@ Scenario: ${topic.prompt}
 How to talk (this matters a lot — the learner said your replies felt robotic):
 - React to the specific details the learner just said; show real interest, curiosity or humor.
 - Sometimes share a short opinion, story or experience of your own, then pass the turn back.
-- Do NOT open with generic praise ("That's great!", "That's awesome!", "Sounds fun!") and do not echo their sentence back. Vary how you start.
+- Do NOT open with generic praise ("That's great!", "That's awesome!", "Sounds fun!") and do not echo their sentence back (except when you say a corrected version back — see "Correcting"). Vary how you start.
 - Use everyday spoken English with contractions and natural fillers when they fit ("Oh nice", "Honestly", "Wait, really?"). Avoid formal or textbook phrasing.
 - Ask at most ONE question per reply, and not every reply has to end with a question.
 - Keep it short like a chat message: usually 1–3 sentences.
@@ -73,16 +87,17 @@ How to talk (this matters a lot — the learner said your replies felt robotic):
 Every learner message may be in English, in Chinese, or English mixed with Chinese words.
 For EVERY learner message, return ONLY a JSON object:
 {
- "correction": null | {"original": "<the learner's sentence(s) that need fixing>", "corrected": "<natural, correct English for what they meant>", "explanation": "<繁體中文（台灣用語）1–2 句：錯在哪、為什麼>", "zh": "<繁體中文：學習者想表達的意思>"},
+ "correction": null | {"original": "<the learner's sentence(s) that need fixing>", "corrected": "<natural, correct English for what they meant>", "explanation": "<繁體中文（台灣用語）1–2 句：錯在哪、為什麼>", "zh": "<繁體中文：學習者想表達的意思>", "style": "recast" | "tip" | "retry" | "silent", "focus": "<the corrected word(s) exactly as they appear in reply>"},
  "howto": [ {"zh": "<繁中 phrase the learner asked about or wrote in Chinese>", "en": "<natural English way to say it>", "alt": "<optional second way>", "note": "<繁中：比較口語或正式、使用場合>"} ],
- "reply": "<your natural spoken-English reply, following 'How to talk'>",
- "replyZh": "<繁體中文翻譯 of reply>"
+ "reply": "<your natural spoken-English reply, following 'How to talk' and 'Correcting'>",
+ "replyZh": "<繁體中文翻譯 of reply>",
+ "retryResult": null | "ok" | "again" | "skip"
 }
 
 Rules:
 - correction: only when the learner wrote English with a real mistake. If their English is correct, use null. If they wrote Chinese words inside an English sentence, set "corrected" to the full English sentence AND add each Chinese part to "howto".
-- howto: when the learner writes in Chinese (for example 「我要去一下廁所英文該怎麼說」 or just a Chinese sentence), teach 1–2 natural ways to say it in "howto", and in "reply" briefly encourage them to try using it. Otherwise use [].
-- Never put corrections or teaching inside "reply"; "reply" is only your natural conversational turn.
+- howto: when the learner writes in Chinese (for example 「我要去一下廁所英文該怎麼說」 or just a Chinese sentence), teach 1–2 natural ways to say it in "howto", and in "reply" say the main way out loud for them and invite them to try it (e.g. "You can say 'I'm so excited!' Try it!"). Otherwise use [].
+- How to correct out loud inside "reply" is explained in "Correcting" below.
 - All Chinese must be Traditional Chinese as used in Taiwan.${article ? `\n\n<article>\n${article}\n</article>` : ""}`;
 }
 
@@ -111,7 +126,7 @@ Scenario: ${topic.prompt}
 How to talk (this matters a lot):
 - React to the specific details the learner just said; show real interest, curiosity or humor.
 - Sometimes share a short opinion, story or experience of your own, then pass the turn back.
-- Do NOT open with generic praise and do not echo their sentence back. Vary how you start.
+- Do NOT open with generic praise and do not echo their sentence back (except when you say a corrected version back — see "Correcting"). Vary how you start.
 - ${lang === "ja" ? "Use natural spoken Japanese, the way a friendly person talks to a beginner (polite です／ます is fine); avoid stiff written phrasing." : "Use everyday spoken Spanish; avoid formal or textbook phrasing."}
 - Ask at most ONE question per reply, and not every reply has to end with a question.
 - Keep it short like a chat message: usually 1–3 sentences.
@@ -119,17 +134,73 @@ How to talk (this matters a lot):
 Every learner message may be in ${W}, in Chinese, or ${W} mixed with Chinese words.
 For EVERY learner message, return ONLY a JSON object:
 {
- "correction": null | {"original": "<the learner's sentence(s) that need fixing>", "corrected": "<natural, correct ${W} for what they meant>", "explanation": "<繁體中文（台灣用語）1–2 句：錯在哪、為什麼>", "zh": "<繁體中文：學習者想表達的意思>"${jaCorr}},
+ "correction": null | {"original": "<the learner's sentence(s) that need fixing>", "corrected": "<natural, correct ${W} for what they meant>", "explanation": "<繁體中文（台灣用語）1–2 句：錯在哪、為什麼>", "zh": "<繁體中文：學習者想表達的意思>"${jaCorr}, "style": "recast" | "tip" | "retry" | "silent", "focus": "<the corrected word(s) exactly as they appear in reply>"},
  "howto": [ {"zh": "<繁中 phrase the learner asked about or wrote in Chinese>", "en": "<natural ${W} way to say it>", "alt": "<optional second way>", "note": "<繁中：語氣、使用場合>"${jaHow}} ],
- "reply": "<your natural spoken-${W} reply, following 'How to talk'>",
- "replyZh": "<繁體中文翻譯 of reply>"${jaFields}
+ "reply": "<your natural spoken-${W} reply, following 'How to talk' and 'Correcting'>",
+ "replyZh": "<繁體中文翻譯 of reply>"${jaFields},
+ "retryResult": null | "ok" | "again" | "skip"
 }
 
 Rules:
 - correction: only when the learner wrote ${W} with a real mistake. If their ${W} is correct, use null. If they wrote Chinese words inside a ${W} sentence, set "corrected" to the full ${W} sentence AND add each Chinese part to "howto".
-- howto: when the learner writes in Chinese (for example 「我要去一下廁所${LANG[lang].name}該怎麼說」 or just a Chinese sentence), teach 1–2 natural ways to say it in "howto" (the field is named "en" but must contain ${W}), and in "reply" briefly encourage them to try using it. Otherwise use [].
-- Never put corrections or teaching inside "reply"; "reply" is only your natural conversational turn.
+- howto: when the learner writes in Chinese (for example 「我要去一下廁所${LANG[lang].name}該怎麼說」 or just a Chinese sentence), teach 1–2 natural ways to say it in "howto" (the field is named "en" but must contain ${W}), and in "reply" say the main way out loud for them and invite them to try it. Otherwise use [].
+- How to correct out loud inside "reply" is explained in "Correcting" below.
 - All Chinese must be Traditional Chinese as used in Taiwan.${article ? `\n\n<article>\n${article}\n</article>` : ""}`;
+}
+
+/** 這次回覆時糾正的狀態：上一則請他再說一次（retryTarget）、最近才請過（recentRetry）。 */
+export interface FixState {
+	retryTarget?: string;
+	retryFocus?: string;
+	recentRetry?: boolean;
+}
+
+/**
+ * 在對話裡當場糾正（v0.24.0；之前規定糾正只能放在文字卡片，AI 說出口的話從不提錯誤，使用者試過覺得不實用）：
+ * 一次最多說出一個最重要的錯，用 recast／tip／retry 其中一種；依使用者選的糾正方式和程度挑。
+ * 每次呼叫都重新產生（加在系統提示最後），因為「上一則是不是請他再說一次」每次都不一樣。
+ */
+export function fixPrompt(mode: CorrectionMode, level: Level, lang: Lang, state: FixState = {}): string {
+	const W = lang === "en" ? "English" : lang === "ja" ? "Japanese" : "Spanish";
+	const choose =
+		mode === "recast"
+			? `Only use "recast" (or "silent" for tiny slips). Never stop to explain and never ask them to say it again.`
+			: mode === "tip"
+				? `Always point at the most important mistake with "tip". If it is the same kind of mistake they already made earlier in this conversation, use "retry" instead.`
+				: level === "kid"
+					? `Choose: small slips → "recast"; a mistake that changes the meaning → "tip"; the same kind of mistake they already made earlier in this conversation, or a short basic sentence worth practicing → "retry". With this child, prefer "recast" and "retry", and keep any "tip" very short.`
+					: `Choose: small slips → "recast" or "silent"; a mistake that changes the meaning or a wrong word choice → "tip"; the same kind of mistake they already made earlier in this conversation → "retry".`;
+	const ja = lang === "ja" ? `\n- They are a beginner in Japanese: prefer "recast" and "retry"; a "tip" must be only a few very simple words.` : "";
+	const ex = lang === "en" ? "" : ` (the examples are in English; do the same in ${W})`;
+	let note = "";
+	if (state.retryTarget)
+		note = `\n\nYour previous reply asked them to say it again. The target: "${state.retryTarget}"${state.retryFocus ? ` (the part that was fixed: "${state.retryFocus}")` : ""}. Their new message is probably that retry:
+- If they now say the fixed part right (another small slip is fine, and so is a different correct wording), set "retryResult": "ok", react with a few warm words (vary them; not always "Great job!") and go on with the conversation.
+- If it is still wrong, set "retryResult": "again", kindly say the correct way once more WITHOUT asking them to repeat it again, and go on.
+- If they said something else instead, set "retryResult": "skip" and just go on.
+Do not use style "retry" in this reply.`;
+	else if (state.recentRetry) note = `\n\nYou asked them to say something again very recently, so do not use style "retry" in this reply.`;
+	return `
+
+Correcting — like a real tutor, out loud inside the conversation (your "reply" is read aloud to the learner, and they may never open the written notes):
+- When their message has a real mistake, fix AT MOST ONE thing out loud: the most important one. Let smaller slips go — still put the whole corrected sentence in "correction", just don't mention them.
+- Set "correction.style" to how you fixed it${ex}:
+  - "recast": react naturally and, while doing it, say the corrected words back as part of your reply, without pointing at the mistake. Learner: "I like play soccer." → "Oh, you like playing soccer? Me too! I play every Saturday."
+  - "tip": one short, friendly sentence in simple ${W} that points it out, then carry on the conversation in the same reply. "Quick tip: we say 'went' for yesterday. So, what did you do there?"
+  - "retry": say the correct way and ask them to say it again; that is your only question in this reply. "Yesterday I... go or went? Say it again!"
+  - "silent": you did not mention it (only for small slips).
+- ${choose}${ja}
+- "correction.focus": the corrected word(s) exactly as they appear in your "reply", copied character for character — only the few words that were fixed — so the app can highlight them. Use "" when the style is "silent".
+- Keep it light: no grammar lectures in "reply" (the Chinese explanation goes in "correction.explanation"). Never correct accent or pronunciation.
+- "retryResult": null unless the note below says otherwise.${note}`;
+}
+
+/** 回覆裡改對的字在哪裡（不分大小寫）；找不到回 null。 */
+export function focusRange(text: string, focus?: string): [number, number] | null {
+	const f = focus?.trim();
+	if (!f) return null;
+	const i = text.toLowerCase().indexOf(f.toLowerCase());
+	return i < 0 ? null : [i, i + f.length];
 }
 
 /** 語音訊息：和錄音一起送出的指示。AI 要先逐字聽寫到 "heard"，再照平常的方式回覆。 */
@@ -188,9 +259,14 @@ export function parseReply(text: string): ChatReply {
 		c && str(c.corrected) && str(c.original) && str(c.corrected).toLowerCase() !== str(c.original).toLowerCase()
 			? { original: str(c.original), corrected: str(c.corrected), explanation: str(c.explanation), zh: str(c.zh) }
 			: null;
+	const reply = str(j.reply);
 	if (correction && c) {
 		if (str(c.reading)) correction.reading = str(c.reading);
 		if (str(c.romaji)) correction.romaji = str(c.romaji);
+		const st = str(c.style) as FixStyle;
+		if (FIX_STYLES.includes(st)) correction.style = st;
+		// 標粗的字一定要真的在回覆裡（小模型偶爾抄錯）
+		if (correction.style !== "silent" && focusRange(reply, str(c.focus))) correction.focus = str(c.focus);
 	}
 	const howto = (Array.isArray(j.howto) ? j.howto : [])
 		.map((h: Record<string, unknown>) => {
@@ -200,7 +276,9 @@ export function parseReply(text: string): ChatReply {
 			return o;
 		})
 		.filter((h) => h.zh && h.en);
-	const out: ChatReply = { correction, howto, reply: str(j.reply), replyZh: str(j.replyZh) };
+	const out: ChatReply = { correction, howto, reply, replyZh: str(j.replyZh) };
+	const rr = str(j.retryResult);
+	if (rr === "ok" || rr === "again" || rr === "skip") out.retryResult = rr;
 	if (str(j.replyReading)) out.replyReading = str(j.replyReading);
 	if (str(j.replyRomaji)) out.replyRomaji = str(j.replyRomaji);
 	return out;
@@ -301,8 +379,9 @@ export function convBlock(m: ConvMessage): string {
 		lines.push(`**You${m.voice ? " 🎤" : ""}:** ${m.text}`, "");
 	} else {
 		const r = parseReply(m.text);
+		if (r.retryResult === "ok") lines.push(`> [!success] 當場改對了`, "");
 		if (r.correction)
-			lines.push(`> [!warning] 修正`, `> ${r.correction.original} → **${r.correction.corrected}**`, ...(r.correction.romaji ? [`> ${r.correction.reading ?? ""}（${r.correction.romaji}）`] : []), `> ${r.correction.explanation}`, "");
+			lines.push(`> [!warning] 修正${r.correction.style ? `・${FIX_STYLE_LABEL[r.correction.style]}` : ""}`, `> ${r.correction.original} → **${r.correction.corrected}**`, ...(r.correction.romaji ? [`> ${r.correction.reading ?? ""}（${r.correction.romaji}）`] : []), `> ${r.correction.explanation}`, "");
 		for (const h of r.howto)
 			lines.push(`> [!tip] 怎麼說：${h.zh}`, `> **${h.en}**${h.alt ? `／${h.alt}` : ""}`, ...(h.romaji ? [`> ${h.reading ?? ""}（${h.romaji}）`] : []), ...(h.note ? [`> ${h.note}`] : []), "");
 		lines.push(`**AI:** ${r.reply}`, ...(r.replyRomaji ? [`${r.replyReading ?? ""}（${r.replyRomaji}）`] : []), ...(r.replyZh ? [`*${r.replyZh}*`] : []), "");

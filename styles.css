@@ -101,6 +101,13 @@
 .el-chat-fix { background: rgba(var(--color-yellow-rgb), 0.15); border-left: 3px solid var(--color-yellow); }
 .el-chat-tip { background: rgba(var(--color-blue-rgb), 0.12); border-left: 3px solid var(--color-blue); }
 .el-chat-box-title { font-size: 0.85em; color: var(--text-muted); margin-bottom: 2px; }
+/* v0.24.0 在對話裡糾正：改對的字標粗、中文說明收起來、請他再說一次、改對了 */
+details.el-chat-fix > summary { cursor: pointer; margin-bottom: 0; }
+details.el-chat-fix[open] > summary { margin-bottom: 4px; }
+.el-fix-word { font-weight: 700; text-decoration: underline; text-decoration-color: var(--color-green); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.el-chat-retry { margin-top: 4px; font-size: 0.9em; color: var(--text-accent); }
+.el-retry-ok { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 0.8em; background: rgba(255, 255, 255, 0.25); }
+.el-small { font-size: 0.8em; }
 .el-chat-typing { color: var(--text-muted); font-style: italic; }
 .el-chat-input { display: flex; gap: 8px; align-items: flex-end; padding: 8px 0; border-top: 1px solid var(--background-modifier-border); }
 .el-chat-input textarea { flex: 1; font-size: 1.05em; min-height: 48px; }

@@ -92,7 +92,9 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 		removeUser: async (name: string) => (removed.push(name), { files: 3, backups: 0 }),
 		prefs: { ray: 100 } as Record<string, number>,
 		chatMemoryOf: (n: string) => plugin.prefs[n] ?? 50,
-		setUserPref: async (n: string, k: string, v: number) => void (plugin.prefs[n] = v),
+		corr: { ray: "tip" } as Record<string, string>,
+		correctionOf: (n: string) => plugin.corr[n] ?? "auto",
+		setUserPref: async (n: string, k: string, v: any) => void (k === "correction" ? (plugin.corr[n] = v) : (plugin.prefs[n] = v)),
 		remember: { amy: false } as Record<string, boolean>,
 		remembers: (n: string) => plugin.remember[n] !== false,
 		setRemember: async (n: string, v: boolean) => void (plugin.remember[n] = v),
@@ -102,8 +104,9 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 	const buttons = [...el.querySelectorAll("button")].map((b) => b.textContent);
 	assert.deepEqual(buttons, ["刪除…", "刪除…", "＋ 新增使用者…"]);
 	// 每位使用者自己的對話記憶長度
-	const selects = [...el.querySelectorAll("select")] as HTMLSelectElement[];
-	assert.equal(selects.length, 2);
+	const all = [...el.querySelectorAll("select")] as HTMLSelectElement[];
+	assert.equal(all.length, 4, "對話記憶長度、糾正方式各兩個");
+	const selects = all.slice(0, 2);
 	assert.deepEqual(
 		[...selects[0].options].map((o) => o.textContent),
 		["最近 24 則", "最近 50 則（預設）", "最近 100 則", "整段對話"],
@@ -114,6 +117,18 @@ test("設定頁：列出使用者與程度；刪除要輸入名字才能按", as
 	selects[1].dispatchEvent(new (window as any).Event("change"));
 	await new Promise((r) => setTimeout(r, 0));
 	assert.equal(plugin.prefs.amy, 0);
+	// 每位使用者自己的對話糾正方式（v0.24.0）
+	const fix = all.slice(2);
+	assert.deepEqual(
+		[...fix[0].options].map((o) => o.textContent),
+		["自動（預設）", "順口帶過就好", "每次都提醒"],
+	);
+	assert.deepEqual([fix[0].value, fix[1].value], ["tip", "auto"], "ray 選了每次都提醒；amy 沒設＝自動");
+	fix[1].value = "recast";
+	fix[1].dispatchEvent(new (window as any).Event("change"));
+	await new Promise((r) => setTimeout(r, 0));
+	assert.deepEqual(plugin.corr, { ray: "tip", amy: "recast" });
+	assert.equal(plugin.prefs.amy, 0, "改糾正方式不會動到對話記憶長度");
 	// 每位使用者自己的「記得以前的對話」（跨對話記憶）
 	const toggles = [...el.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
 	assert.equal(toggles.length, 2);

@@ -45,6 +45,7 @@ function setup(o: Opts = {}) {
 		settings: { users: ["ray", "kid"] },
 		userNames: () => ["ray", "kid"],
 		chatMemoryOf: () => 50,
+		correctionOf: () => "auto",
 		levelOf: (u: string) => (u === "kid" ? "kid" : "adult"),
 		getApiKey: () => "k",
 		fastBackend() {

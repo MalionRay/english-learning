@@ -50,7 +50,7 @@
 - 清單在 Vault：english/users/<deviceId>.jsonl（append-only、單一寫入者），type "user-add"（name、level）／"user-remove"，依時間（同時間依 UUID）重播（replayUsers）；同步後所有裝置一致；也在備份範圍
 - 舊版 settings.users 第一次啟動時寫成 ts 1970 的 user-add（seedEvents，kid＝小孩；localStorage english-learning:users-seeded 只做一次），任何真正的新增／刪除都比它晚，不會讓刪掉的人復活；settings.users 之後只當快取
 - 設定頁「使用者」區：每位一列（程度、刪除…），「＋ 新增使用者…」（AddUserModal：名字只能 a-z0-9_-、不可重複、選成人／小孩，建立後切換成他）；指令「新增使用者」；主畫面（書本圖示）也有使用者選單、「＋ 新增使用者」（v0.20.2）和「刪除使用者…」（刪選單上選的那位，v0.20.3）
-- 每位使用者自己的設定（v0.22.0）：同一個 jsonl 裡的 type "user-set"（key、value），重播時最後一筆為準、只套用在已存在的使用者（刪掉再建立是新的人，設定清空）；UserInfo.prefs；plugin.setUserPref 寫入並觸發同步；目前有 chatMemory（對話記憶長度）、remember（跨對話記憶的開關，沒設定＝開；plugin.remembers／setRemember）
+- 每位使用者自己的設定（v0.22.0）：同一個 jsonl 裡的 type "user-set"（key、value），重播時最後一筆為準、只套用在已存在的使用者（刪掉再建立是新的人，設定清空）；UserInfo.prefs；plugin.setUserPref 寫入並觸發同步；目前有 chatMemory（對話記憶長度）、remember（跨對話記憶的開關，沒設定＝開；plugin.remembers／setRemember）、correction（對話的糾正方式，v0.24.0；plugin.correctionOf，沒設定＝auto）
 - 刪除（DeleteUserModal 要輸入名字確認；至少留一位）：先寫 user-remove，再 deleteUserData 刪 logs/<name>/（所有裝置的檔）、debug/diag/<name>/（診斷紀錄）、english/reports/<name>/、english/memory/<name>/（對話記憶）、frontmatter user 是他的對話檔（照 Obsidian 刪除設定進垃圾桶），並改寫 backup/*/*.json 拿掉他的資料；文章、題庫、錄音共用不刪；刪除前把他這個月的 Google Cloud 語音字數轉記到另一位使用者（tts log，carriedFrom），每月上限才不會少算（v0.20.1）
 
 ## 多語言：英文、西班牙文、日文（src/lang.ts、src/kana.ts、src/langview.ts，v0.20.0）
@@ -102,7 +102,7 @@
 
 ## 英文對話與句子本（src/chat.ts、src/chatview.ts）
 - 對話記憶長度（v0.22.0，使用者 2026-11-09 要求、每個帳號各自設定）：historyTurns 只送最近 N 則訊息給 AI（N＝plugin.chatMemoryOf(user)：24／50／100／0＝整段對話，預設 50，不在選項裡的值用 50；原本固定 24）；設定頁「使用者」區下面「對話記憶長度」每位一個選單；這是「同一次對話」裡 AI 看得到多少；不同次對話之間靠「跨對話記憶」接上（v0.23.0，見下面一節），前 3 次對話另外拿來估程度
-- AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh）、howto[]（中文→英文說法）、reply、replyZh
+- AIBackend.chat 多輪；回覆一律 JSON：correction（原句、修正、繁中說明、想表達的意思 zh、style、focus）、howto[]（中文→英文說法）、reply、replyZh、retryResult（v0.24.0，見「對話裡當場糾正」）
 - 對話角色：成人 Alex（32 歲、Portland、設計師、去過台灣）、小孩 Mia（12 歲、Seattle）；提示要求針對細節回應、分享自己的經驗、不要制式稱讚開頭、口語、每次最多一個問題；temperature 0.9（使用者回饋 3.1-flash-lite 的回答很機械）
 - 對話自適應程度（src/chatlevel.ts，v0.18.0）：每次呼叫依最近 10 則學習者訊息（含這位使用者前 3 次對話）估 1～5 級（小孩最多 4；沒紀錄時成人 3、小孩 2；樣本少時往起點靠、越新越重）。訊息分數：全中文 0.15、被糾正依字的編輯距離（小錯 0.75、重寫 0.1）、夾中文最多 0.5、沒錯 1（1～2 字 0.6）；平均少於 4 字最多 3 級；還沒有 AI 回覆的訊息不算。levelPrompt 加在系統提示：低級短句常用字，高級像朋友聊天；明確要求「自然不等於困難」，不刻意用難字難句。頂端顯示「程度：…」，改變時寫 debug
 - 學習者可用英文、中文或中英夾雜；中文問「怎麼說」→ howto；英文裡夾中文 → correction＋howto
@@ -114,6 +114,14 @@
 - AI 速度測試（src/speedtest.ts；對話開始畫面與指令）：在裝置上量列出模型（純網路）、最短生成、對話大小 JSON（兩次）、thinkingLevel minimal 兩種寫法、其他 flash 模型、自然語音（網路與解碼分開）與主執行緒卡頓，結果寫進 debug 並同步
 - 回應速度：chat 用 hedged 請求，還沒回就再送一份、最多三份（CHAT_HEDGE_MS [5000, 12000]、語音 VOICE_HEDGE_MS [6000, 13000]，從第一份算；v0.23.2，見「回應速度」一節），45 秒逾時；api log 記 ms、copies、winner，超過 8 秒寫 debug；使用者訊息寫檔不等待（寫入佇列保持順序）
 - 練習題型「句子」qid "phrase:<key>"、qtype "phrase"：看中文說英文，AI 批改（gradeTranslation）或自己判斷（會／差一點＝hint／不會）
+
+## 對話裡當場糾正（src/chat.ts 的 fixPrompt，v0.24.0）
+- 原因：使用者 2026-11-22 說批改都用文字，和真人練習很不一樣、試了覺得不實用；真人老師是在對話裡當場糾正。之前的提示明確規定「Never put corrections or teaching inside reply」，AI 說出口的話從不提錯誤，只有文字卡片——這條拿掉了，不要再加回來
+- 一次最多「說出來」一個最重要的錯，其他小錯不打斷（照樣寫在 correction、進句子本和錯誤分析）。correction.style：recast＝回話時順口用對的說法重說（不點出錯誤）；tip＝一句簡單的外語提醒、同一則接著聊；retry＝說出對的、請他再說一次（這則只問這個）；silent＝沒說出來。correction.focus＝回覆裡改對的那幾個字（parseReply 只在真的出現在 reply 裡時才留，silent 不留）
+- 糾正方式（每位使用者，user-set correction：auto 預設／recast 順口帶過就好／tip 每次都提醒；users.ts 的 CORRECTION_*，normalizeCorrection）：auto 小錯 recast、影響意思的 tip、同樣的錯又出現時 retry，小孩多用 recast 和 retry、成人多用 tip；recast 只順口重說、絕不要求重說；tip 每個錯都提醒，重複的錯用 retry。日文初學者多用 recast、retry。設定頁「使用者」區和對話開始畫面（.el-fix-mode）都能改
+- fixPrompt(mode, level, lang, state) 每次送出時加在系統提示最後（targetsPrompt 後面）：ChatView.fixState() 看上一則 AI 訊息——是 retry 就把 corrected／focus 當 retryTarget 告訴 AI，這一則回 retryResult ok／again／skip（again＝再說一次正確的、不再要求重說），而且這則不能再用 retry；最近三則 AI 訊息裡用過 retry 就 recentRetry（這則不要 retry）
+- 畫面：AI 泡泡先出來，focus 的字標粗加綠色底線（englishLine 的 focus 參數，依 tokenize 的位置判斷）；即時的 retry 泡泡下面「🎤 換你再說一次」；中文說明收在泡泡下面的 details「📝 為什麼？」（silent 是「📝 可以說得更好」），點了才展開；retryResult ok 時在他那一句標「✓ 改對了」（重開對話也一樣，看 AI 那則的 JSON）。對話檔的修正 callout 寫「修正・順口重說」等，改對了寫 [!success] 當場改對了
+- howto：AI 在 reply 裡也直接說出來、請他試試看；提示的「不要重複學習者的話」例外：順口重說可以
 
 ## 跨對話記憶（src/memory.ts，v0.23.0）
 - 使用者 2026-11-14 決定要做，而且「各記各的」：每位使用者、每種語言各一份（英文的 Alex、西班牙文的 Sofía、日文的結衣互相不知道）；ray 和 kid 也不混
